@@ -1385,9 +1385,10 @@ class Renderer{
         ctx.strokeStyle=hexA(TEAMC[tm],0.35);ctx.lineWidth=2;ctx.setLineDash([10,8]);ctx.strokeRect(sec*sw+2,2,sw-4,MH-4);ctx.setLineDash([]);
         if(k>0){const w=sw*k,x0=tm===0?sec*sw:(sec+1)*sw-w;ctx.fillStyle=hexA(TEAMC[tm],0.12+0.18*k);ctx.fillRect(x0,0,w,MH);
           ctx.fillStyle=TEAMC[tm];ctx.fillRect(sec*sw+6,MH-14,(sw-12)*k,6);}}
-      ctx.strokeStyle='rgba(25,18,12,.85)';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(fx,0);ctx.lineTo(fx,MH);ctx.stroke();
-      ctx.strokeStyle='rgba(205,195,175,.85)';ctx.lineWidth=1.3;ctx.beginPath();for(let y=0;y<=MH;y+=6)ctx.lineTo(fx+Math.sin(y/9)*4,y);ctx.stroke();
-      ctx.beginPath();for(let y=10;y<MH;y+=24){ctx.moveTo(fx-5,y-5);ctx.lineTo(fx+5,y+5);ctx.moveTo(fx+5,y-5);ctx.lineTo(fx-5,y+5);}ctx.stroke();}
+      // barbed wire on the front line: thin and see-through so the walls underneath stay readable
+      ctx.strokeStyle='rgba(25,18,12,.25)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(fx,0);ctx.lineTo(fx,MH);ctx.stroke();
+      ctx.strokeStyle='rgba(205,195,175,.5)';ctx.lineWidth=0.9;ctx.beginPath();for(let y=0;y<=MH;y+=6)ctx.lineTo(fx+Math.sin(y/9)*3,y);ctx.stroke();
+      ctx.beginPath();for(let y=10;y<MH;y+=24){ctx.moveTo(fx-3,y-3);ctx.lineTo(fx+3,y+3);ctx.moveTo(fx+3,y-3);ctx.lineTo(fx-3,y+3);}ctx.stroke();}
     if(V.flags)for(const f of V.flags){ctx.setLineDash([6,5]);ctx.strokeStyle=TEAMC[f.team];ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(f.hx,f.hy,22,0,7);ctx.stroke();ctx.setLineDash([]);}
     for(const mn of V.mines){const own=view.friendly(mn.o);const armed=mn.arm<=0;ctx.globalAlpha=own?0.95:(armed?view.mineAlpha:0.95);
       ctx.fillStyle='#3b3a2c';ctx.beginPath();ctx.arc(mn.x,mn.y,7,0,7);ctx.fill();ctx.strokeStyle='#1e1d16';ctx.lineWidth=2;ctx.stroke();
@@ -1575,36 +1576,39 @@ class Renderer{
     this.deaths.push(d);
   }
   drawDeaths(ctx,dt){
-    const dc=this.decCtx();
-    for(const d of this.deaths){d.t+=dt;const k=Math.min(1,d.t/d.dur),done=d.t>=d.dur;
+    // bodies lie around for CORPSE_LIFE seconds and then fade away, so the map stays readable (blood stains stay)
+    const dc=this.decCtx(),CORPSE_LIFE=4,FADE=0.6;
+    for(const d of this.deaths){d.t+=dt;const k=Math.min(1,d.t/d.dur),done=d.t>=d.dur,alpha=clamp((CORPSE_LIFE-d.t)/FADE,0,1);
+      const live=fn=>{ctx.save();ctx.globalAlpha*=alpha;fn(ctx);ctx.restore();};
       if(d.cause===0){
         const e=1-Math.pow(1-Math.min(1,d.t/0.35),2),x=d.x+Math.cos(d.a)*16*e,y=d.y+Math.sin(d.a)*16*e,rot=d.a+d.spin*0.5*e;
         const h=d.helmet,f=Math.max(0,1-4*dt);h.x+=h.vx*dt;h.y+=h.vy*dt;h.vx*=f;h.vy*=f;h.r+=Math.hypot(h.vx,h.vy)*dt*0.2;
         if(d.t<0.6&&Math.random()<0.5)this.dirP(x,y,rot+(Math.random()-0.5),0.3,1,'#b3121b',60,0.4,2.5);
         const draw=c=>{const pr=3+15*Math.min(1,d.t/d.dur);c.fillStyle='rgba(105,7,13,.88)';c.beginPath();c.ellipse(x-Math.cos(rot)*2,y-Math.sin(rot)*2,pr*1.25,pr,rot,0,7);c.fill();this.corpse(c,x,y,rot,d.col,0);this.helmetAt(c,h.x,h.y,h.r,d.col);};
-        draw(done?dc:ctx);}
+        live(draw);}
       else if(d.cause===1){
         for(const p of d.parts){const f=Math.max(0,1-3.2*dt);p.x+=p.vx*dt;p.y+=p.vy*dt;p.vx*=f;p.vy*=f;p.r+=p.vr*dt;p.vr*=f;
           if(Math.hypot(p.vx,p.vy)>25&&p.k!=='helmet'){dc.fillStyle='rgba(110,8,14,.75)';dc.beginPath();dc.arc(p.x,p.y,1+Math.random()*1.6,0,7);dc.fill();}}
-        if(done){for(const p of d.parts){if(p.k!=='helmet')splat(dc,p.x,p.y,5);this.gib(dc,p,d.col);}}else for(const p of d.parts)this.gib(ctx,p,d.col);}
+        if(done&&!d.splatted){d.splatted=1;for(const p of d.parts)if(p.k!=='helmet')splat(dc,p.x,p.y,5);}
+        live(c=>{for(const p of d.parts)this.gib(c,p,d.col);});}
       else if(d.cause===2){
         const fall=Math.min(1,d.t/0.6),rot=d.a+d.spin*0.3;
         if(Math.random()<0.6)this.parts.push({x:d.x+(Math.random()-0.5)*14,y:d.y+(Math.random()-0.5)*10,vx:(Math.random()-0.5)*15,vy:-20-Math.random()*25,life:1.2,max:1.2,c:'rgba(70,65,60,.5)',s:5});
         if(d.t<0.9&&Math.random()<0.7)this.parts.push({x:d.x+(Math.random()-0.5)*16,y:d.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*20,vy:-30-Math.random()*30,life:0.5,max:0.5,c:Math.random()<0.5?'#ff8a2a':'#ffd23f',s:3});
         const draw=c=>{c.fillStyle='rgba(20,14,10,.6)';c.beginPath();c.ellipse(d.x,d.y,16,11,rot,0,7);c.fill();this.corpse(c,d.x,d.y,rot,d.col,fall>0.5?2:1);};
-        draw(done?dc:ctx);}
+        live(draw);}
       else if(d.cause===3){ // drowned: sinks, one arm reaching up, bubbles; the helmet floats
         if(!done){ctx.save();ctx.globalAlpha=1-k;const s=1-0.7*k;ctx.translate(d.x,d.y);ctx.scale(s,s);this.corpse(ctx,0,0,d.a,d.col,0);ctx.restore();
           if(k<0.75){const wv=Math.sin(d.t*14)*3,hx=d.x+8+wv,hy=d.y-14+k*10;ctx.strokeStyle=shade(d.col,-0.3);ctx.lineWidth=3;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(d.x+4,d.y);ctx.lineTo(hx,hy);ctx.stroke();ctx.fillStyle='#3a3226';ctx.beginPath();ctx.arc(hx,hy,2.4,0,7);ctx.fill();}
           ctx.strokeStyle='rgba(220,240,255,'+(0.6*(1-k))+')';ctx.lineWidth=1.5;for(let i=0;i<3;i++){ctx.beginPath();ctx.arc(d.x,d.y,6+((d.t*30+i*10)%30),0,7);ctx.stroke();}
           if(Math.random()<0.5)this.parts.push({x:d.x+(Math.random()-0.5)*12,y:d.y+(Math.random()-0.5)*12,vx:0,vy:-12,life:0.6,max:0.6,c:'rgba(220,240,255,.7)',s:2.5});}
-        else this.helmetAt(dc,d.x+6,d.y+3,d.a,d.col);}
+        else live(c=>this.helmetAt(c,d.x+6,d.y+3,d.a,d.col));}
       else{ // vaporised by a nuke: white flash, then a burnt shadow stays on the ground
         const draw=(c,alpha,colr)=>{c.save();c.globalAlpha=alpha;c.translate(d.x,d.y);c.rotate(d.a);c.fillStyle=colr;c.beginPath();c.ellipse(-1,0,8,5.5,0,0,7);c.fill();c.beginPath();c.arc(9,0,4,0,7);c.fill();
           c.strokeStyle=colr;c.lineWidth=3.4;c.lineCap='round';c.beginPath();c.moveTo(-6,-3);c.lineTo(-15,-7);c.moveTo(-6,3);c.lineTo(-14,8);c.moveTo(2,-6);c.lineTo(6,-14);c.moveTo(2,6);c.lineTo(9,11);c.stroke();c.restore();};
-        if(done)draw(dc,0.75,'#0d0907');else draw(ctx,1-k*0.5,k<0.4?'#fff8e0':'#2a1d14');}
+        if(done)draw(ctx,0.75*alpha,'#0d0907');else draw(ctx,1-k*0.5,k<0.4?'#fff8e0':'#2a1d14');}
     }
-    this.deaths=this.deaths.filter(d=>d.t<d.dur);
+    this.deaths=this.deaths.filter(d=>d.t<CORPSE_LIFE);
   }
   corpse(c,x,y,rot,col,style){ // style 0 bloody, 1 burning, 2 charred skeleton
     c.save();c.translate(x,y);c.rotate(rot);
