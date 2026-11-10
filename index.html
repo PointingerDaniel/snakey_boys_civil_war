@@ -167,7 +167,7 @@ kbd{font-family:var(--f-cond);font-weight:700;background:#0b0a09;border:1px soli
           <div class="kicker">Est. 2026 · Geneva Convention not included</div>
           <h1>SNAKEY BOYS <span>CIVIL WAR</span></h1>
           <p class="tag">Brothers. Bullets. Zero fucking mercy.</p>
-          <p class="muted" style="max-width:52ch;margin:10px 0 0">Up to 8 soldiers in a maze of rivers, bridges, ice and jungle. Bullets bounce off walls straight back into your own stupid face. Every death is messy. 15 power-ups, 5 modes, 5 theatres of war.</p>
+          <p class="muted" style="max-width:52ch;margin:10px 0 0">Up to 8 soldiers in a maze of rivers, bridges, ice and jungle. Bullets bounce off walls straight back into your own stupid face. Every death is messy. 14 power-ups, 5 modes, 5 theatres of war.</p>
         </div>
         <div class="enlist">
           <div id="inviteBanner" class="invite-banner" hidden>
@@ -326,7 +326,6 @@ const PU={
   laser:{n:'Laser',c:'#ff5ad9',a:1,d:'Instant beam, bounces up to 6 times. A dotted line shows where it goes.'},
   mega:{n:'Mega Beam',c:'#ff3030',a:1,w:0.3,d:'Charge for 1.5 s, then a fat death ray erases walls, bridges and every poor bastard in its path.',x:'Rare'},
   mine:{n:'Mines',c:'#e0b02a',a:3,d:'Drop 3 mines behind you. Enemies can barely see them.'},
-  homing:{n:'Homing missile',c:'#ff8a2a',a:1,d:'Finds its own way through the maze to the nearest enemy.'},
   remote:{n:'Guided missile',c:'#ff4242',a:1,d:'Steer it with your movement keys. Power key again to blow it.'},
   nuke:{n:'Nuke strike',c:'#b6ff3c',a:1,w:0.6,d:'You stop and a scope appears. Steer it, hit power, and a bomber drops a nuke right there. Boom on impact.',x:'Uncommon'},
   freeze:{n:'Frost grenade',c:'#8fe6ff',a:1,d:'Freezes soldiers solid and turns water into ice for 12 s.'},
@@ -818,7 +817,6 @@ class Game{
       case'laser':this.fireLaser(t);break;
       case'mega':t.charge=1.5;this.addFx('charge',t.x,t.y);this.pushFeed(this.L('megaCall',{n:this.pname(t.pid)}));break;
       case'mine':{const mx=t.x-ca*(TR+7),my=t.y-sa*(TR+7);this.mines.push({id:this.nid++,x:mx,y:my,o:t.pid,arm:1.1});this.addFx('mine',mx,my);break;}
-      case'homing':this.shoot(t,'m',a,165,5,12);break;
       case'remote':t.guide=this.shoot(t,'r',a,165,5,8);break;
       case'nuke':t.aim={x:t.x+ca*120,y:t.y+sa*120,t:8};t.aim.x=clamp(t.aim.x,10,MW-10);t.aim.y=clamp(t.aim.y,10,MH-10);break;
       case'freeze':this.objs.push({id:this.nid++,k:'frz',x:t.x+ca*(TR+9),y:t.y+sa*(TR+9),vx:ca*270,vy:sa*270,t:1.2,o:t.pid});break;
@@ -925,7 +923,6 @@ class Game{
     for(const b of this.bullets){
       if(!b.alive)continue;b.age+=dt;b.life-=dt;
       if(b.life<=0){if(b.k==='f')this.burst(b);else if(b.k==='m'||b.k==='r')this.explodeBullet(b);else b.alive=false;continue;}
-      if(b.k==='m')this.steerHoming(b,dt);
       if(b.k==='m'||b.k==='r'){b.vx=Math.cos(b.a)*b.sp;b.vy=Math.sin(b.a)*b.sp;}
       const sp=Math.hypot(b.vx,b.vy),n=Math.max(1,Math.ceil(sp*dt/3)),sdt=dt/n;
       for(let s=0;s<n&&b.alive;s++){
@@ -954,18 +951,6 @@ class Game{
       }
     }
     this.bullets=this.bullets.filter(b=>b.alive);
-  }
-  steerHoming(b,dt){
-    if(b.age<0.35)return;
-    let tg=null,bd=1e9;
-    for(const t of this.tanks){if(!t.alive||t.pid===b.o||t.cloak>0||t.tr===1||!this.foe(b.o,t))continue;const d=Math.hypot(t.x-b.x,t.y-b.y);if(d<bd){bd=d;tg=t;}}
-    if(!tg)return;
-    let ax=tg.x,ay=tg.y;
-    const los=rayCast(this.map,b.x,b.y,(tg.x-b.x)/bd,(tg.y-b.y)/bd,bd).t>=bd-1;
-    if(!los){b.pt=(b.pt||0)-dt;
-      if(b.pt<=0||b.wp==null){b.pt=0.25;const p=bfs(this.map,Math.floor(b.x/C),Math.floor(b.y/C),Math.floor(tg.x/C),Math.floor(tg.y/C),true);b.wp=p&&p.length>1?p[1]:null;}
-      if(b.wp!=null){ax=(b.wp%GW+0.5)*C;ay=((b.wp/GW|0)+0.5)*C;if(Math.hypot(ax-b.x,ay-b.y)<12)b.pt=0;}}
-    const d=angDiff(b.a,Math.atan2(ay-b.y,ax-b.x));b.a+=clamp(d,-6*dt,6*dt);
   }
   updMines(dt){
     for(const mn of this.mines){if(mn.dead)continue;mn.arm-=dt;if(mn.arm>0)continue;
@@ -1151,7 +1136,7 @@ class Game{
     if(t.w&&b.pwT<=0){
       if(t.w==='nuke'&&e){b.pwT=1;return B_PW;}
       if(t.w==='mine'){b.mineT-=dt;if(b.mineT<=0){b.mineT=1.5+Math.random()*3;b.pwT=0.3;inp|=B_PW;}}
-      if((t.w==='homing'||t.w==='remote')&&e&&Math.random()<0.02){b.pwT=1;inp|=B_PW;}}
+      if(t.w==='remote'&&e&&Math.random()<0.02){b.pwT=1;inp|=B_PW;}}
     if(e){const dx=e.x-t.x,dy=e.y-t.y,dist=Math.hypot(dx,dy);
       const los=rayCast(m,t.x,t.y,dx/dist,dy/dist,dist).t>=dist-1;
       if(los&&dist<700){const d=angDiff(t.a,Math.atan2(dy,dx));
@@ -1233,10 +1218,9 @@ function drawIcon(ctx,k,s,col){
     case'laser':P([[-.9,.4],[-.35,-.4],[.15,.4],[.9,-.4]]);ctx.stroke();ctx.beginPath();ctx.arc(.9*r,-.4*r,lw,0,7);ctx.fill();break;
     case'mega':ctx.globalAlpha=.35;ctx.fillRect(-.6*r,-.45*r,1.6*r,.9*r);ctx.globalAlpha=1;ctx.fillRect(-.6*r,-.22*r,1.6*r,.44*r);ctx.beginPath();ctx.arc(-.62*r,0,.38*r,0,7);ctx.fill();ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(-.62*r,0,.15*r,0,7);ctx.fill();break;
     case'mine':ctx.beginPath();ctx.arc(0,0,.42*r,0,7);ctx.fill();for(let i=0;i<8;i++){const a=i*Math.PI/4;ctx.beginPath();ctx.moveTo(Math.cos(a)*.42*r,Math.sin(a)*.42*r);ctx.lineTo(Math.cos(a)*.85*r,Math.sin(a)*.85*r);ctx.stroke();}break;
-    case'homing':case'remote':ctx.save();ctx.rotate(-Math.PI/4);ctx.beginPath();ctx.moveTo(.95*r,0);ctx.lineTo(.45*r,-.24*r);ctx.lineTo(-.6*r,-.24*r);ctx.lineTo(-.6*r,.24*r);ctx.lineTo(.45*r,.24*r);ctx.closePath();ctx.fill();
+    case'remote':ctx.save();ctx.rotate(-Math.PI/4);ctx.beginPath();ctx.moveTo(.95*r,0);ctx.lineTo(.45*r,-.24*r);ctx.lineTo(-.6*r,-.24*r);ctx.lineTo(-.6*r,.24*r);ctx.lineTo(.45*r,.24*r);ctx.closePath();ctx.fill();
       P([[-.6,-.24],[-.9,-.55],[-.4,-.24]]);ctx.fill();P([[-.6,.24],[-.9,.55],[-.4,.24]]);ctx.fill();ctx.restore();
-      if(k==='homing'){ctx.lineWidth=lw*.8;ctx.beginPath();ctx.arc(.55*r,.55*r,.28*r,0,7);ctx.stroke();}
-      else{ctx.lineWidth=lw*.8;ctx.beginPath();ctx.arc(-.55*r,-.55*r,.25*r,-1.2,0.4);ctx.stroke();ctx.beginPath();ctx.arc(-.55*r,-.55*r,.45*r,-1.2,0.4);ctx.stroke();}break;
+      ctx.lineWidth=lw*.8;ctx.beginPath();ctx.arc(-.55*r,-.55*r,.25*r,-1.2,0.4);ctx.stroke();ctx.beginPath();ctx.arc(-.55*r,-.55*r,.45*r,-1.2,0.4);ctx.stroke();break;
     case'nuke':ctx.beginPath();ctx.arc(0,0,.95*r,0,7);ctx.lineWidth=lw*.8;ctx.stroke();for(let i=0;i<3;i++){ctx.beginPath();ctx.moveTo(0,0);ctx.arc(0,0,.78*r,i*2.094-Math.PI/2-0.5,i*2.094-Math.PI/2+0.5);ctx.closePath();ctx.fill();}ctx.fillStyle='#111';ctx.beginPath();ctx.arc(0,0,.2*r,0,7);ctx.fill();ctx.fillStyle=col;ctx.beginPath();ctx.arc(0,0,.11*r,0,7);ctx.fill();break;
     case'freeze':for(let i=0;i<3;i++){const a=i*Math.PI/3;ctx.beginPath();ctx.moveTo(Math.cos(a)*.9*r,Math.sin(a)*.9*r);ctx.lineTo(-Math.cos(a)*.9*r,-Math.sin(a)*.9*r);ctx.stroke();
       for(const sgn of[1,-1]){const bx=Math.cos(a)*.55*r*sgn,by=Math.sin(a)*.55*r*sgn;ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(bx+Math.cos(a+sgn*0.9+(sgn<0?Math.PI:0))*.25*r,by+Math.sin(a+sgn*0.9+(sgn<0?Math.PI:0))*.25*r);ctx.stroke();}}break;
