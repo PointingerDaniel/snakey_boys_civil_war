@@ -324,14 +324,17 @@ const B_UP=1,B_DN=2,B_LT=4,B_RT=8,B_FIRE=16,B_PW=32,B_RL=64;
 const COLORS=['#e5484d','#3e7bfa','#2fbf71','#f5a524','#a463f2','#14b8a6','#ec4899','#e8e2cf'];
 const TEAMC=['#e5484d','#3e7bfa'],TEAMN=['Red','Blue'];
 const BOTN=['Hissy Fit','Sir Slither','Danger Noodle','Rattles','Fang','Coily McCoil','Sssteve','Lord Venom'];
-// Mortar: a 60 mm light mortar. Map scale is about 5 m per cell, so the whole map is ~100 x 65 m, which is
-// high-angle territory (elevation 83-89 deg, muzzle velocity ~70 m/s). That gives a flight time of ~14 s at every
-// range on this map. Damage: certain kill within ~6 m, fragments up to ~15 m with falling odds (walls stop them,
+// Mortar: a 60 mm light mortar. Map scale is about 5 m per cell, so the whole map is ~100 x 65 m. At these short
+// ranges a crew fires the lowest charge at ~45-50 deg elevation (muzzle velocity ~20-32 m/s), which gives a flight
+// time of sqrt(2R/g): ~1.5 s at 10 m, ~3 s at 50 m, ~4.5 s at 100 m. The shell is visible on its arc the whole way.
+// Damage: certain kill within ~6 m, fragments up to ~15 m with falling odds (walls stop them,
 // a trench only protects you from fragments, not from a shell landing in it).
-const MORTAR_V=70,MORTAR_G=9.81,M_PER_PX=5/C;
+const MORTAR_G=9.81,M_PER_PX=5/C;
 const MORTAR_KILL=6/M_PER_PX,MORTAR_FRAG=15/M_PER_PX; // px
 const MORTAR_SHOTS=3,MORTAR_RELOAD=3*0.8,MORTAR_SPREAD=1.5/M_PER_PX,MORTAR_MAX=2;
-function mortarTof(distPx){const R=Math.max(1,distPx*M_PER_PX),s=clamp(R*MORTAR_G/(MORTAR_V*MORTAR_V),0,1),th=Math.PI/2-Math.asin(s)/2;return 2*MORTAR_V*Math.sin(th)/MORTAR_G;}
+function mortarTof(distPx){const R=Math.max(5,distPx*M_PER_PX);return Math.sqrt(2*R/MORTAR_G);}
+// height of the shell above the ground (in px) at flight progress p (0..1): a 45 deg arc peaks at a quarter of the range
+function shellHeight(dist,p){return dist*p*(1-p);}
 const TEAM_MODES_WITH_MORTAR=['team','ctf','front'];
 const PEEK_ARC=80*Math.PI/180; // peeking out of a trench: +-80 deg around straight out
 const PU={
@@ -345,7 +348,7 @@ const PU={
   minigun:{n:'Gatling gun',c:'#ffd23f',a:40,d:'Hold the power key: 40 rounds of spinning-barrel hate.'},
   frag:{n:'Frag bomb',c:'#ff9f6e',a:1,d:'Power again to burst it into 14 shards.'},
   drill:{n:'Drill shell',c:'#b58cff',a:3,d:'Punches straight through any inner wall.'},
-  mortar:{n:'Mortar',c:'#c9b27a',a:MORTAR_SHOTS,w:1.2,modes:TEAM_MODES_WITH_MORTAR,emp:1,d:'Only in dead ends and map corners. Walk in, press power to man it. Needs two of you: the first aims the scope, the second fires. 3 shells, ~14 s flight time, then you\'re free again.',x:'Teams of 2+ only'},
+  mortar:{n:'Mortar',c:'#c9b27a',a:MORTAR_SHOTS,w:1.2,modes:TEAM_MODES_WITH_MORTAR,emp:1,d:'Sits in dead ends and map corners (in Frontline: behind a wall facing the front). Walk in, press power to man it. Needs two of you: the first aims the scope, the second fires. 3 shells, 2-5 s in the air, then you\'re free again.',x:'Teams of 2+ only'},
   shield:{n:'Shield',c:'#4fd1c5',inst:1,d:'Blocks one hit (10 s). Kicks in on pickup.'},
   cloak:{n:'Cloak',c:'#aab3c5',inst:1,d:'Invisible to enemies for 8 s. Kicks in on pickup.'},
   turbo:{n:'Turbo',c:'#fff176',inst:1,d:'Much faster for 6 s. Kicks in on pickup.'}
@@ -759,20 +762,22 @@ class Game{
     const ang=Math.random()*Math.PI*2,r=Math.sqrt(Math.random())*MORTAR_SPREAD; // real tubes scatter a little
     const tx=clamp(mo.aim.x+Math.cos(ang)*r,4,MW-4),ty=clamp(mo.aim.y+Math.sin(ang)*r,4,MH-4);
     const tof=mortarTof(Math.hypot(tx-mo.x,ty-mo.y))*GAME_SPEED; // real seconds -> game seconds
-    this.objs.push({id:this.nid++,k:'shell',x:tx,y:ty,t:tof,T:tof,o:mo.crew[0],tm:mo.team,wh:false});
+    this.objs.push({id:this.nid++,k:'shell',x:tx,y:ty,sx:mo.x,sy:mo.y,t:tof,T:tof,o:mo.crew[0],tm:mo.team,wh:false});
     mo.shots--;mo.cd=MORTAR_RELOAD;this.addFx('mlaunch',mo.x,mo.y);
     if(mo.shots<=0)this.removeMortar(mo);
   }
   updMortars(dt){for(const mo of this.mortars){if(mo.cd>0)mo.cd-=dt;
     mo.crew=mo.crew.filter(pid=>{const t=this.tank(pid);return t&&t.alive&&t.mo===mo.id;});if(!mo.crew.length)mo.team=-1;}}
   spawnMortar(){
-    // only in dead ends (three walls) or the 3x3 corner areas of the map
-    const m=this.map,cand=[];
+    // only in dead ends (three walls) or the 3x3 corner areas of the map.
+    // Frontline: only in a team's own half, tucked behind a vertical wall on the side that faces the front.
+    const m=this.map,cand=[],front=this.cfg.mode==='front';
     for(let i=0;i<GW*GH;i++){const x=i%GW,y=i/GW|0,ty=m.t[i];
       if(ty===T_WATER||ty===T_TELE||ty===T_TRENCH||ty===T_BRIDGE||ty===T_BOOST)continue;
       if(this.hill&&this.inHill(x,y))continue;
-      let w=0;for(let d=0;d<4;d++)if(wallAt(m,x,y,d))w++;
-      const corner=(x<3||x>=GW-3)&&(y<3||y>=GH-3);if(w!==3&&!corner)continue;
+      if(front){const left=x<GW/2;if(left?x>=GW/2-2:x<GW/2+2)continue;if(!wallAt(m,x,y,left?1:0))continue;}
+      else{let w=0;for(let d=0;d<4;d++)if(wallAt(m,x,y,d))w++;
+        const corner=(x<3||x>=GW-3)&&(y<3||y>=GH-3);if(w!==3&&!corner)continue;}
       const cx=(x+0.5)*C,cy=(y+0.5)*C;
       if(this.tanks.some(t=>t.alive&&Math.hypot(t.x-cx,t.y-cy)<C))continue;
       if(this.pickups.some(p=>Math.hypot(p.x-cx,p.y-cy)<C))continue;
@@ -976,7 +981,7 @@ class Game{
         if(!o.dropped&&(o.tx-o.x)*o.dx+(o.ty-o.y)*o.dy<=0){o.dropped=true;this.objs.push({id:this.nid++,k:'bomb',x:o.tx,y:o.ty,t:0.9,o:o.o});}
         if(o.dropped&&(o.x<-260||o.y<-260||o.x>MW+260||o.y>MH+260))o.dead=true;continue;}
       if(o.k==='bomb'){o.t-=dt;if(o.t<=0){o.dead=true;this.nukeBoom(o.x,o.y,o.o);}continue;}
-      if(o.k==='shell'){o.t-=dt;if(!o.wh&&o.t<=1.4){o.wh=true;this.addFx('whistle',o.x,o.y);} // everyone hears it coming in
+      if(o.k==='shell'){o.t-=dt;if(!o.wh&&o.t<=Math.min(1.4,o.T*0.5)){o.wh=true;this.addFx('whistle',o.x,o.y);} // everyone hears it coming in
         if(o.t<=0){o.dead=true;this.mortarBoom(o.x,o.y,o.o);}continue;}
       const f=Math.max(0,1-2.4*dt);o.vx*=f;o.vy*=f;o.x+=o.vx*dt;o.y+=o.vy*dt;
       for(const w of m.walls){if(!w.alive)continue;const c=circRect(o.x,o.y,8,w);if(!c)continue;o.x+=c.nx*c.p;o.y+=c.ny*c.p;const dot=o.vx*c.nx+o.vy*c.ny;if(dot<0){o.vx-=2*dot*c.nx;o.vy-=2*dot*c.ny;}}
@@ -1190,7 +1195,7 @@ class Game{
       B:this.bullets.slice(0,120).map(b=>[b.id%8192,r(b.x),r(b.y),BK.indexOf(b.k),r(Math.atan2(b.vy,b.vx)*10)/10]),
       N:this.mines.map(n=>[r(n.x),r(n.y),n.o,n.arm>0?0:1]),
       U:this.pickups.map(p=>[r(p.x),r(p.y),PU_KEYS.indexOf(p.k)]),
-      O:this.objs.map(o=>o.k==='bomber'?[r(o.x),r(o.y),1,0,r(o.a*100)/100,o.o]:o.k==='bomb'?[r(o.x),r(o.y),2,r(o.t*100),0,o.o]:o.k==='shell'?[r(o.x),r(o.y),3,r(o.t*100),r(o.T*100),o.o,o.tm]:[r(o.x),r(o.y),0,r(o.t*10),0,o.o]),
+      O:this.objs.map(o=>o.k==='bomber'?[r(o.x),r(o.y),1,0,r(o.a*100)/100,o.o]:o.k==='bomb'?[r(o.x),r(o.y),2,r(o.t*100),0,o.o]:o.k==='shell'?[r(o.x),r(o.y),3,r(o.t*100),r(o.T*100),o.o,o.tm,r(o.sx),r(o.sy)]:[r(o.x),r(o.y),0,r(o.t*10),0,o.o]),
       F:this.fx.map(f=>[f.id,FXK.indexOf(f.k),r(f.x),r(f.y),r(f.r),f.c,f.p||0]),
       td,wd,wh,
       fl:this.flags?this.flags.map(f=>[f.team,r(f.x),r(f.y),f.car,r(f.hx),r(f.hy)]):0,
@@ -1443,9 +1448,16 @@ class Renderer{
           const k=clamp(o.t/(o.T||1),0,1);ctx.strokeStyle='rgba(255,140,60,.75)';ctx.lineWidth=1.5;ctx.setLineDash([3,4]);ctx.beginPath();ctx.arc(o.x,o.y,MORTAR_KILL,0,7);ctx.stroke();ctx.setLineDash([]);
           ctx.beginPath();ctx.arc(o.x,o.y,MORTAR_KILL*0.35,-Math.PI/2,-Math.PI/2+Math.PI*2*k);ctx.stroke();
           ctx.font='700 12px "Barlow Condensed", sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#ffb070';ctx.fillText(Math.max(0,o.t/GAME_SPEED).toFixed(1)+' s',o.x,o.y);}
-        if(o.t<0.9){ // the last moment: everyone sees it drop
-          const k=1-o.t/0.9;ctx.fillStyle='rgba(0,0,0,'+(0.15+0.35*k)+')';ctx.beginPath();ctx.ellipse(o.x,o.y,3+6*k,2+4*k,0,0,7);ctx.fill();
-          ctx.save();ctx.translate(o.x,o.y-40*(1-k));ctx.fillStyle='#3a3d30';ctx.beginPath();ctx.ellipse(0,0,2.6,5.5,0,0,7);ctx.fill();ctx.fillStyle='#c9b27a';ctx.fillRect(-2.6,-5.5,5.2,1.6);ctx.restore();}}}
+        { // everyone sees the shell on its arc: shadow on the ground, the shell itself lifted by its height
+          const sx=o.sx==null?o.x:o.sx,sy=o.sy==null?o.y:o.sy,p=clamp(1-o.t/(o.T||1),0,1),dist=Math.hypot(o.x-sx,o.y-sy);
+          const gx=sx+(o.x-sx)*p,gy=sy+(o.y-sy)*p,h=shellHeight(dist,p),hk=dist>0?h/(dist*0.25):0;
+          const p2=clamp(p+0.04,0,1),h2=shellHeight(dist,p2),nx=sx+(o.x-sx)*p2,ny=sy+(o.y-sy)*p2-h2,ang=Math.atan2(ny-(gy-h),nx-gx);
+          ctx.fillStyle='rgba(0,0,0,'+(0.4-0.25*hk)+')';ctx.beginPath();ctx.ellipse(gx,gy,4+3*hk,2.8+2*hk,0,0,7);ctx.fill();
+          for(let j=1;j<=6;j++){const q=p-j*0.025;if(q<=0)break;const qx=sx+(o.x-sx)*q,qy=sy+(o.y-sy)*q-shellHeight(dist,q); // smoke trail
+            ctx.fillStyle='rgba(230,225,215,'+(0.32-j*0.045)+')';ctx.beginPath();ctx.arc(qx,qy,2.2+j*0.7,0,7);ctx.fill();}
+          ctx.save();ctx.translate(gx,gy-h);ctx.rotate(ang);const s=1.6+1.1*hk;ctx.scale(s,s);
+          ctx.fillStyle='rgba(255,220,160,.25)';ctx.beginPath();ctx.ellipse(-7,0,6,1.6,0,0,7);ctx.fill();
+          ctx.fillStyle='#3a3d30';ctx.beginPath();ctx.ellipse(0,0,5.5,2.6,0,0,7);ctx.fill();ctx.fillStyle='#c9b27a';ctx.fillRect(-5.5,-2.6,1.6,5.2);ctx.restore();}}}
     for(const t of V.tanks)if(t.alive&&t.aim&&view.friendly(t.pid))this.drawScope(ctx,t.aim.x,t.aim.y,this.tankColor(V,t.pid),tm,t);
     for(const mo of V.mortars||[])if(mo.aim&&mo.crew.length&&view.myTeam(mo.team))this.drawMortarScope(ctx,mo,TEAMC[mo.team]||'#ffcf5a',tm);
     ctx.setTransform(dpr,0,0,dpr,0,0);
@@ -2047,7 +2059,7 @@ function clientView(){
     mines:(Array.isArray(s.N)?s.N:[]).map(n=>({x:+n[0],y:+n[1],o:n[2]|0,arm:n[3]?0:1})),
     pickups:(Array.isArray(s.U)?s.U:[]).map(u=>({x:+u[0],y:+u[1],k:PU_KEYS[u[2]]})),
     objs:(Array.isArray(s.O)?s.O:[]).map(o=>{const k=['frz','bomber','bomb','shell'][o[2]|0]||'frz';let x=+o[0],y=+o[1];if(k==='bomber'){const q=pO.find(z=>z[2]===1&&z[5]===o[5]&&Math.hypot(z[0]-x,z[1]-y)<120);if(q){x=L(+q[0],x);y=L(+q[1],y);}}
-      if(k==='shell')return{x,y,k,t:(+o[3]||0)/100,T:(+o[4]||1)/100,o:o[5]|0,tm:o[6]|0};
+      if(k==='shell')return{x,y,k,t:(+o[3]||0)/100,T:(+o[4]||1)/100,o:o[5]|0,tm:o[6]|0,sx:o[7]==null?x:+o[7],sy:o[8]==null?y:+o[8]};
       return{x,y,k,t:k==='bomb'?(+o[3]||0)/100:(+o[3]||0)/10,a:+o[4]||0,o:o[5]|0};}),
     mortars:(Array.isArray(s.M)?s.M:[]).slice(0,8).map(q=>({id:q[0]|0,x:+q[1],y:+q[2],shots:q[3]|0,crew:[q[4],q[5]].map(v=>v|0).filter(v=>v>=0),aim:(+q[6])>=0?{x:+q[6],y:+q[7]}:null,cd:(+q[8]||0)/10,team:q[9]|0})),
     fx:(Array.isArray(s.F)?s.F:[]).map(f=>({id:+f[0]|0,k:FXK[f[1]]||'shot',x:+f[2],y:+f[3],r:+f[4]||0,c:f[5]|0,p:Array.isArray(f[6])?f[6].slice(0,12).map(q=>[+q[0],+q[1]]):0})),
