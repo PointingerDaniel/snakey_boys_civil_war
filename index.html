@@ -470,8 +470,9 @@ class Game{
   addPlayer(p){
     if(this.pl(p.pid))return;
     this.players.push(Object.assign({},p,{score:0,kills:0,deaths:0}));
+    // Late joiners get a tank right away (also mid-round), with a short spawn shield.
     const t=this.makeTank(p.pid);this.tanks.push(t);
-    if(!this.M.round)this.spawn(t);
+    this.spawn(t);t.prot=2;
     this.pushFeed(this.L('join',{n:p.name}));
   }
   removePlayer(pid){
@@ -1291,8 +1292,9 @@ async function hostGame(){
     });
     peer.on('disconnected',()=>{try{if(!peer.destroyed)peer.reconnect();}catch(e){}});
   }
-  S.hostTimer=setInterval(()=>{emitLb();const now=performance.now();
-    for(const v of [...NET.conns.values()])if(v.conn.relay&&now-v.conn.seen>9000)dropConn(v.conn);},1000);
+  S.hostSecond=()=>{emitLb();const now=performance.now();
+    for(const v of [...NET.conns.values()])if(v.conn.relay&&now-v.conn.seen>9000)dropConn(v.conn);};
+  if(!TICKER)S.hostTimer=setInterval(S.hostSecond,1000);
   emitLb();renderLobby();
 }
 function onHostData(c,d){
@@ -1323,34 +1325,41 @@ async function joinGame(code){
   await leaveAll(true);
   show('lobby');S.role='client';S.code=code;S.clb={cfg:defCfg('lts'),players:[]};renderLobby();$('lbHint').textContent='Connecting to the host …';
   S.snaps=[];S.inp=-1;S.lastMsg=performance.now();R.reset();
-  let ok=false;
-  if(typeof Peer==='function'&&!FORCE_RELAY)ok=await tryDirect(code);
+  let ok=false;S.nlog=[];
+  if(typeof Peer==='function'&&!FORCE_RELAY){nlog('direct: trying');ok=await tryDirect(code);nlog('direct: '+(ok?'ok':'failed ('+(S.whyDirect||'?')+')'));}
+  else nlog('direct: skipped');
   if(S.role!=='client')return;
-  if(!ok){$('lbHint').textContent='Direct line blocked, trying the backup route …';ok=await tryRelay(code);}
+  if(!ok){$('lbHint').textContent='Direct line blocked, trying the backup route …';nlog('backup: trying');ok=await tryRelay(code);nlog('backup: '+(ok?'ok':'failed ('+(S.whyRelay||'?')+')'));}
   if(S.role!=='client')return;
-  if(!ok){leaveAll(false,'Could not reach game '+code.toUpperCase()+'. Check the code and make sure the host still has the game open.');return;}
+  if(!ok){leaveAll(false,'Could not reach game '+code.toUpperCase()+'. Check the code and make sure the host still has the game open. [Log: '+S.nlog.join(' | ')+']');return;}
   S.lastMsg=performance.now();
   S.clientTimer=setInterval(()=>{if(S.role!=='client')return;toHost({t:'ping'});
     if(performance.now()-S.lastMsg>10000)leaveAll(false,'Lost the connection to the host.');},1000);
 }
+function nlog(s){S.nlog=(S.nlog||[]).concat(s).slice(-8);if(S.role==='client'&&S.screen==='lobby')$('lbShareHint').textContent='Connection: '+S.nlog.join(' · ');}
 function tryDirect(code){
+  // Success only counts once the host has actually answered with its lobby, not just when the line opens.
   return new Promise(async res=>{
-    let peer;try{peer=await openPeer(null);}catch(e){res(false);return;}
+    S.whyDirect='';
+    let peer;try{peer=await openPeer(null);}catch(e){S.whyDirect='broker '+e;res(false);return;}
     if(S.role!=='client'){try{peer.destroy();}catch(_){ }res(false);return;}
-    NET.peer=peer;let settled=false;
-    const fin=v=>{if(settled)return;settled=true;clearTimeout(to);if(!v){try{peer.destroy();}catch(_){ }NET.peer=null;NET.conn=null;}res(v);};
-    const to=setTimeout(()=>fin(false),8000);
-    peer.on('error',()=>fin(false));
+    NET.peer=peer;let settled=false,opened=false;
+    const fin=(v,why)=>{if(settled)return;settled=true;clearTimeout(to);if(!v){S.whyDirect=why||'';const c=NET.conn;NET.conn=null;NET.peer=null;try{if(c)c.close();}catch(_){ }try{peer.destroy();}catch(_){ }}res(v);};
+    const to=setTimeout(()=>fin(false,opened?'host silent':'timeout'),9000);
+    peer.on('error',e=>fin(false,e&&e.type||'error'));
     const c=peer.connect(PEER_PREFIX+code,{serialization:'json',reliable:true});NET.conn=c;
-    c.on('open',()=>{if(settled)return;send(c,{t:'hello',name:myName(),col:S.col});fin(true);});
-    c.on('close',()=>{if(!settled){fin(false);return;}if(S.role==='client'&&NET.conn===c)leaveAll(false,'The host bailed. Typical.');});
-    c.on('data',onClientData);
+    c.on('open',()=>{if(settled)return;opened=true;nlog('direct: line open');send(c,{t:'hello',name:myName(),col:S.col});});
+    c.on('close',()=>{if(!settled){fin(false,opened?'dropped':'closed');return;}if(S.role==='client'&&NET.conn===c)leaveAll(false,'The host bailed. Typical.');});
+    c.on('error',()=>{if(!settled)fin(false,'channel error');});
+    c.on('data',d=>{if(settled&&NET.conn!==c)return;if(!settled&&d&&d.t==='lb'&&Array.isArray(d.P)&&d.P.some(p=>Array.isArray(p)&&p[4]===peer.id))fin(true);onClientData(d);});
   });
 }
 function tryRelay(code){
   return new Promise(async res=>{
-    let cli;try{cli=await openRelay();}catch(e){res(false);return;}
+    S.whyRelay='';
+    let cli;try{cli=await openRelay();}catch(e){S.whyRelay='relay '+e;res(false);return;}
     if(S.role!=='client'){try{cli.end(true);}catch(_){ }res(false);return;}
+    nlog('backup: relay connected');
     RELAY.cli=cli;NET.relayId=Math.random().toString(36).replace(/[^a-z0-9]/g,'').slice(0,8).padEnd(8,'x');NET.relayCode=code;
     let settled=false;
     const fin=v=>{if(settled)return;settled=true;clearTimeout(to);clearInterval(hi);if(!v){try{cli.end(true);}catch(_){ }RELAY.cli=null;NET.relayId=null;}res(v);};
@@ -1360,7 +1369,7 @@ function tryRelay(code){
       onClientData(d);});
     const hello=()=>toHost({t:'hello',name:myName(),col:S.col});
     hello();const hi=setInterval(hello,1500);
-    const to=setTimeout(()=>fin(false),10000);
+    const to=setTimeout(()=>{S.whyRelay='host silent';fin(false);},10000);
   });
 }
 function onClientData(d){if(S.role!=='client'||!d||typeof d!=='object')return;S.lastMsg=performance.now();
@@ -1464,14 +1473,28 @@ function renderHud(V,view){
 
 // ====== Main loop ======
 let last=performance.now(),acc=0,snapT=0,hudT=0;
+// The host simulates on a Web Worker clock: browsers throttle timers and pause animation frames in background tabs, worker timers keep running.
+let hostLast=0,hostAcc=0,hostSnapT=0,hostSecT=0;
+function hostTick(){
+  if(S.role!=='host'){hostLast=0;return;}
+  const now=performance.now(),dt=hostLast?Math.min(0.25,(now-hostLast)/1000):0;hostLast=now;
+  hostSecT+=dt;if(hostSecT>=1){hostSecT=0;if(S.hostSecond)S.hostSecond();}
+  if(S.game&&S.screen==='game'){
+    hostAcc+=dt;let n=0;while(hostAcc>=1/60&&n<15){S.game.step(GAME_SPEED/60,collectInputs());hostAcc-=1/60;n++;}if(n>=15)hostAcc=0;
+    if(NET.conns.size){hostSnapT+=dt;if(hostSnapT>=(hasRelayConns()?0.07:0.05)){hostSnapT=0;broadcast({t:'s',d:S.game.snap()});}}
+  }
+}
+const TICKER=(()=>{try{const w=new Worker(URL.createObjectURL(new Blob(['setInterval(function(){postMessage(0)},20)'],{type:'text/javascript'})));w.onmessage=hostTick;return w;}catch(e){return null;}})();
 function gameView(G){return Object.assign(Object.create(G),{salty:!!G.cfg.salty});}
 function frame(now){
   requestAnimationFrame(frame);
   const dt=Math.min(0.1,(now-last)/1000);last=now;
   if(S.screen!=='game')return;
   let V=null;
-  if(S.role!=='client'&&S.game){acc+=dt;let n=0;while(acc>=1/60&&n<8){S.game.step(GAME_SPEED/60,collectInputs());acc-=1/60;n++;}if(n>=8)acc=0;V=gameView(S.game);
-    if(S.role==='host'&&NET.conns.size){snapT+=dt;if(snapT>=(hasRelayConns()?0.07:0.05)){snapT=0;broadcast({t:'s',d:S.game.snap()});}}}
+  if(S.role!=='client'&&S.game){
+    if(S.role!=='host'||!TICKER){acc+=dt;let n=0;while(acc>=1/60&&n<8){S.game.step(GAME_SPEED/60,collectInputs());acc-=1/60;n++;}if(n>=8)acc=0;}
+    V=gameView(S.game);
+    if(S.role==='host'&&!TICKER&&NET.conns.size){snapT+=dt;if(snapT>=(hasRelayConns()?0.07:0.05)){snapT=0;broadcast({t:'s',d:S.game.snap()});}}}
   else if(S.role==='client'){
     const bits=readScheme('any')|S.touch;S.inpT=(S.inpT||0)-dt;if((bits!==S.inp||S.inpT<=0)&&clientLinked()){S.inp=bits;S.inpT=0.5;toHost({t:'inp',v:bits});}
     V=clientView();if(performance.now()-S.lastMsg>8000){leaveAll(false,'Lost the connection to the host.');return;}}
@@ -1480,7 +1503,7 @@ function frame(now){
   R.draw(V,view);
   hudT-=dt;if(hudT<=0){hudT=0.2;renderHud(V,view);}
 }
-setInterval(()=>{if(document.hidden&&S.role==='host'&&S.game&&S.screen==='game'){for(let i=0;i<30;i++)S.game.step(GAME_SPEED/60,collectInputs());broadcast({t:'s',d:S.game.snap()});}},500);
+if(!TICKER)setInterval(()=>{if(document.hidden&&S.role==='host'&&S.game&&S.screen==='game'){for(let i=0;i<30;i++)S.game.step(GAME_SPEED/60,collectInputs());broadcast({t:'s',d:S.game.snap()});}},500);
 addEventListener('resize',()=>{const d=Math.min(2,devicePixelRatio||1);if(d!==R.dpr)R.resize();});
 
 $('muteBtn').onclick=()=>{AU.muted=!AU.muted;$('muteBtn').textContent='Sound: '+(AU.muted?'off':'on');};
