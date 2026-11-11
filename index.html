@@ -316,6 +316,7 @@ const PEER_PREFIX='snakeyboys-cw-';
 const C=54,GW=20,GH=13,WT=6,TR=12,MW=GW*C,MH=GH*C;
 const GAME_SPEED=0.8;       // 1 = original pace
 const MAG=3,RELOAD_T=0.6;   // rounds per mag, seconds (game time) per round reloaded (one key press = one round)
+const TURN_SPEED=4.6;       // radians per second (game time) a soldier turns; was 3.3
 const BULLET_BOUNCES=2;     // normal gun rounds ricochet this often, the next wall stops them
 const HILL={x:Math.floor(GW/2)-1,y:Math.floor(GH/2)-1,w:3,h:2};
 const T_GRASS=0,T_SAND=1,T_ICE=2,T_WATER=3,T_BRIDGE=4,T_BUSH=5,T_BOOST=6,T_TELE=7,T_CRATER=8,T_TRENCH=9;
@@ -689,14 +690,14 @@ class Game{
     let rot=0;if(inp&B_LT)rot-=1;if(inp&B_RT)rot+=1;
     if(t.tr===2){ // peeking over the parapet: pinned to the spot, aim within +-80 deg of straight out
       t.x=t.px;t.y=t.py;t.vx=t.vy=0;
-      const base=t.pk>0?0:Math.PI;t.a=base+clamp(angDiff(base,t.a+rot*3.3*dt),-PEEK_ARC,PEEK_ARC);
+      const base=t.pk>0?0:Math.PI;t.a=base+clamp(angDiff(base,t.a+rot*TURN_SPEED*dt),-PEEK_ARC,PEEK_ARC);
       if(dnPress){this.duck(t);return;}
       if(upPress){this.hopOut(t);return;}
       this.gun(t,press);this.power(t,pw,pwPress);return;}
     let sp=105*(t.turbo>0?1.5:1);
     if(ty===T_SAND||ty===T_CRATER)sp*=0.6;else if(ty===T_BOOST)sp*=1.75;else if(ty===T_BUSH)sp*=0.85;
     if(t.tr===1)sp*=0.8;
-    t.a+=rot*3.3*dt;
+    t.a+=rot*TURN_SPEED*dt;
     if(!dn)t.dnLock=false; // after ducking, the reverse key has to be let go before it moves you again
     let mv=0;if(up)mv+=1;if(dn&&!t.dnLock)mv-=0.7;
     const tvx=Math.cos(t.a)*sp*mv,tvy=Math.sin(t.a)*sp*mv;
