@@ -203,7 +203,7 @@ kbd{font-family:var(--f-cond);font-weight:700;background:#0b0a09;border:1px soli
         <h2>Your controls <small>click a key to change it</small></h2>
         <div class="callout"><b>Power-ups have their own key.</b> Your gun always fires with the shoot key, even while you're holding a power-up. The power-up only goes off with the power key.</div>
         <div id="binds" class="binds"></div>
-        <div class="row"><button id="bindReset" type="button">Reset to defaults</button><span class="muted" style="font-size:13px">Your gun holds 3 rounds. Reload one at a time, whenever you like.</span></div>
+        <div class="row"><button id="bindReset" type="button">Reset to defaults</button><span class="muted" style="font-size:13px">Your gun holds 3 rounds. Every press of reload loads one round. Bullets ricochet twice, then they're spent.</span></div>
         <p class="muted" style="font-size:13px;margin:12px 0 0">Local game, players 2 and 3: <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> shoot <kbd>R-Shift</kbd> power <kbd>R-Ctrl</kbd> reload <kbd>/</kbd> · <kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> shoot <kbd>U</kbd> power <kbd>O</kbd> reload <kbd>P</kbd></p>
       </div>
       <div class="card c7">
@@ -315,7 +315,8 @@ kbd{font-family:var(--f-cond);font-weight:700;background:#0b0a09;border:1px soli
 const PEER_PREFIX='snakeyboys-cw-';
 const C=54,GW=20,GH=13,WT=6,TR=12,MW=GW*C,MH=GH*C;
 const GAME_SPEED=0.8;       // 1 = original pace
-const MAG=3,RELOAD_T=0.6;   // rounds per mag, seconds (game time) per round reloaded
+const MAG=3,RELOAD_T=0.6;   // rounds per mag, seconds (game time) per round reloaded (one key press = one round)
+const BULLET_BOUNCES=2;     // normal gun rounds ricochet this often, the next wall stops them
 const HILL={x:Math.floor(GW/2)-1,y:Math.floor(GH/2)-1,w:3,h:2};
 const T_GRASS=0,T_SAND=1,T_ICE=2,T_WATER=3,T_BRIDGE=4,T_BUSH=5,T_BOOST=6,T_TELE=7,T_CRATER=8,T_TRENCH=9;
 const SEC=8,FRONT_T=8;      // Frontline: number of map sections, seconds (game time) of majority needed to push one section
@@ -670,9 +671,9 @@ class Game{
     const rld=!!(inp&B_RL),rlPress=rld&&!t.pr;t.pr=rld;
     const up=!!(inp&B_UP),upPress=up&&!t.pu;t.pu=up;
     const dn=!!(inp&B_DN),dnPress=dn&&!t.pdn;t.pdn=dn;
-    // reload: only ever starts on the reload key, never by itself. Runs one round at a time.
+    // reload: only ever starts on the reload key, never by itself. Each press loads exactly one round.
     if(rlPress&&t.mag<MAG&&!t.rlOn){t.rlOn=true;t.rl=0;}
-    if(t.rlOn){t.rl+=dt;if(t.rl>=RELOAD_T){t.rl=0;t.mag++;if(t.mag>=MAG){t.mag=MAG;t.rlOn=false;}}}
+    if(t.rlOn){t.rl+=dt;if(t.rl>=RELOAD_T){t.rl=0;t.mag=Math.min(MAG,t.mag+1);t.rlOn=false;if(t.brain)t.pr=false;}} // bots hold the key, let them press again
     if(t.frozen>0){t.frozen-=dt;t.vx=t.vy=0;return;}
     if(t.mo){this.crewTank(t,inp,pwPress,dt);return;}
     if(t.aim){ // nuke scope: tank parked, movement keys fly the crosshair
@@ -951,7 +952,9 @@ class Game{
           const c=circRect(b.x,b.y,b.r,w);if(!c)continue;
           if(b.k==='r'){this.explodeBullet(b);break;}
           if(b.k==='d'&&!w.b){this.breakWall(wi);this.addFx('debris',b.x,b.y);b.alive=false;break;}
-          b.x+=c.nx*c.p;b.y+=c.ny*c.p;const dot=b.vx*c.nx+b.vy*c.ny;if(dot<0){b.vx-=2*dot*c.nx;b.vy-=2*dot*c.ny;}
+          b.x+=c.nx*c.p;b.y+=c.ny*c.p;const dot=b.vx*c.nx+b.vy*c.ny;
+          if(dot<0&&b.k==='b'&&(b.bn=(b.bn||0)+1)>BULLET_BOUNCES){b.alive=false;this.addFx('debris',b.x,b.y);break;}
+          if(dot<0){b.vx-=2*dot*c.nx;b.vy-=2*dot*c.ny;}
           if(b.k==='m')b.a=Math.atan2(b.vy,b.vx);
           if(w.wood&&b.k!=='m'&&b.k!=='h'){w.hp--;m.ver++;if(w.hp<=0){this.breakWall(wi);this.addFx('debris',b.x,b.y);}}
         }
