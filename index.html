@@ -329,10 +329,10 @@ const BOTN=['Hissy Fit','Sir Slither','Danger Noodle','Rattles','Fang','Coily Mc
 // Mortar: a 60 mm light mortar. Map scale is about 5 m per cell, so the whole map is ~100 x 65 m. At these short
 // ranges a crew fires the lowest charge at ~45-50 deg elevation (muzzle velocity ~20-32 m/s), which gives a flight
 // time of sqrt(2R/g): ~1.5 s at 10 m, ~3 s at 50 m, ~4.5 s at 100 m. The shell is visible on its arc the whole way.
-// Damage: certain kill within ~6 m, fragments up to ~15 m with falling odds (walls stop them,
+// Damage: certain kill within ~10 m, fragments up to ~22 m with falling odds (walls stop them,
 // a trench only protects you from fragments, not from a shell landing in it).
 const MORTAR_G=9.81,M_PER_PX=5/C;
-const MORTAR_KILL=6/M_PER_PX,MORTAR_FRAG=15/M_PER_PX; // px
+const MORTAR_KILL=10/M_PER_PX,MORTAR_FRAG=22/M_PER_PX; // px
 const MORTAR_SHOTS=3,MORTAR_RELOAD=3*0.8,MORTAR_SPREAD=1.5/M_PER_PX,MORTAR_MAX=2;
 function mortarTof(distPx){const R=Math.max(5,distPx*M_PER_PX);return Math.sqrt(2*R/MORTAR_G);}
 // height of the shell above the ground (in px) at flight progress p (0..1): a 45 deg arc peaks at a quarter of the range
@@ -796,8 +796,8 @@ class Game{
       if(rayCast(m,x,y,(t.x-x)/d,(t.y-y)/d,d).t<d-2)continue; // walls stop fragments
       if(Math.random()<0.5*(1-(d-MORTAR_KILL)/(MORTAR_FRAG-MORTAR_KILL)))this.hurt(t,by,'mortar',dir);}
     for(const mn of this.mines)if(!mn.dead&&Math.hypot(mn.x-x,mn.y-y)<MORTAR_KILL)this.mineBoom(mn);
-    for(const mo of [...this.mortars])if(Math.hypot(mo.x-x,mo.y-y)<MORTAR_KILL*0.6)this.removeMortar(mo);
-    m.walls.forEach((w,i)=>{if(w.alive&&w.wood&&Math.hypot(w.x+w.w/2-x,w.y+w.h/2-y)<MORTAR_KILL*0.8)this.breakWall(i);});
+    for(const mo of [...this.mortars])if(Math.hypot(mo.x-x,mo.y-y)<3.6/M_PER_PX)this.removeMortar(mo);
+    m.walls.forEach((w,i)=>{if(w.alive&&w.wood&&Math.hypot(w.x+w.w/2-x,w.y+w.h/2-y)<4.8/M_PER_PX)this.breakWall(i);});
     const ci=cellOf(x,y);if(ci>=0){const ty=m.t[ci];
       if(ty===T_BRIDGE&&Math.hypot((ci%GW+0.5)*C-x,((ci/GW|0)+0.5)*C-y)<C*0.35){m.t[ci]=T_WATER;m.ver++;}
       else if(ty===T_GRASS||ty===T_SAND||ty===T_BUSH||ty===T_BOOST){m.t[ci]=T_CRATER;m.ver++;}}
