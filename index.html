@@ -112,7 +112,7 @@ kbd{font-family:var(--f-cond);font-weight:700;background:#0b0a09;border:1px soli
 .game{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:14px;align-items:start}
 @media (max-width:900px){.game{grid-template-columns:minmax(0,1fr)}}
 .stage{position:relative;width:100%;margin:0 auto;background:#050404;border-radius:6px;overflow:hidden;border:1px solid var(--line)}
-.stage canvas{display:block;width:100%;height:100%}
+.stage canvas{display:block;width:100%;height:100%;cursor:crosshair}
 .feed{display:flex;flex-direction:column;gap:4px;font-family:var(--f-cond);font-weight:700;font-size:14px;line-height:1.25}
 .feed:empty::after{content:'Nobody has died yet.';color:var(--muted);font-weight:400;font-family:var(--f-body);font-size:13px}
 .feed div{background:#0b0a09;border-left:4px solid var(--blood);padding:3px 8px 4px;border-radius:0 4px 4px 0;color:#fbeee0;overflow-wrap:anywhere}
@@ -201,7 +201,7 @@ kbd{font-family:var(--f-cond);font-weight:700;background:#0b0a09;border:1px soli
     <div class="grid">
       <div class="card c5 stamp" data-stamp="READ THIS">
         <h2>Your controls <small>click a key to change it</small></h2>
-        <div class="callout"><b>Power-ups have their own key.</b> Your gun always fires with the shoot key, even while you're holding a power-up. The power-up only goes off with the power key.</div>
+        <div class="callout"><b>Move with W A S D, aim with the mouse.</b> W/A/S/D walk up/left/down/right on the screen, your soldier always points at the mouse. Left click (or the shoot key) fires your gun, right click (or the power key) fires your power-up.</div>
         <div id="binds" class="binds"></div>
         <div class="row"><button id="bindReset" type="button">Reset to defaults</button><span class="muted" style="font-size:13px">Your gun holds 3 rounds. Every press of reload loads one round. Bullets ricochet twice, then they're spent.</span></div>
         <p class="muted" style="font-size:13px;margin:12px 0 0">Local game, players 2 and 3: <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> shoot <kbd>R-Shift</kbd> power <kbd>R-Ctrl</kbd> reload <kbd>/</kbd> · <kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> shoot <kbd>U</kbd> power <kbd>O</kbd> reload <kbd>P</kbd></p>
@@ -323,6 +323,11 @@ const T_GRASS=0,T_SAND=1,T_ICE=2,T_WATER=3,T_BRIDGE=4,T_BUSH=5,T_BOOST=6,T_TELE=
 const SEC=8,FRONT_T=8;      // Frontline: number of map sections, seconds (game time) of majority needed to push one section
 const DX=[-1,1,0,0],DY=[0,0,-1,1];
 const B_UP=1,B_DN=2,B_LT=4,B_RT=8,B_FIRE=16,B_PW=32,B_RL=64;
+// Mouse aim travels inside the input number: bits + 256*(1 + x + AIM_X*y), x/y = mouse point in map pixels.
+// No aim part (input < 256) = classic tank controls (bots, keyboard-only local players, touch).
+const AIM_X=2048,AIM_MAX=256*(1+AIM_X*1024);
+function packAim(bits,x,y){return bits+256*(1+clamp(Math.round(x),0,AIM_X-1)+AIM_X*clamp(Math.round(y),0,1023));}
+function unpackAim(inp){if(!(inp>=256))return null;const v=Math.floor(inp/256)-1;return{x:v%AIM_X,y:Math.floor(v/AIM_X)};}
 const COLORS=['#e5484d','#3e7bfa','#2fbf71','#f5a524','#a463f2','#14b8a6','#ec4899','#e8e2cf'];
 const TEAMC=['#e5484d','#3e7bfa'],TEAMN=['Red','Blue'];
 const STAIN_LIFE=2,STAIN_FADE=0.5,STAIN_SIZE=360; // blood stains: seconds on the ground, fade-out, layer size in px
@@ -344,8 +349,8 @@ const PU={
   laser:{n:'Laser',c:'#ff5ad9',a:1,d:'Instant beam, bounces up to 6 times. A dotted line shows where it goes.'},
   mega:{n:'Mega Beam',c:'#ff3030',a:1,w:0.3,d:'Charge for 1.5 s, then a fat death ray erases walls, bridges and every poor bastard in its path.',x:'Rare'},
   mine:{n:'Mines',c:'#e0b02a',a:3,d:'Drop 3 mines behind you. Enemies can barely see them.'},
-  remote:{n:'Guided missile',c:'#ff4242',a:1,d:'Steer it with your movement keys. Power key again to blow it.'},
-  nuke:{n:'Nuke strike',c:'#b6ff3c',a:1,w:0.6,d:'You stop and a scope appears. Steer it, hit power, and a bomber drops a nuke right there. Boom on impact.',x:'Uncommon'},
+  remote:{n:'Guided missile',c:'#ff4242',a:1,d:'It flies towards your mouse pointer, forward key boosts. Power again to blow it.'},
+  nuke:{n:'Nuke strike',c:'#b6ff3c',a:1,w:0.6,d:'You stop and a scope appears. Point it with the mouse, hit power, and a bomber drops a nuke right there. Boom on impact.',x:'Uncommon'},
   freeze:{n:'Frost grenade',c:'#8fe6ff',a:1,d:'Freezes soldiers solid and turns water into ice for 12 s.'},
   shotgun:{n:'Shotgun',c:'#efe7d2',a:2,d:'8 pellets, short range, two blasts.'},
   minigun:{n:'Gatling gun',c:'#ffd23f',a:40,d:'Hold the power key: 40 rounds of spinning-barrel hate.'},
@@ -386,7 +391,7 @@ const THEMES=[
 ];
 const TER_INFO=[[T_GRASS,'Ground','Normal speed'],[T_SAND,'Soft ground','Slows you to 60 %'],[T_ICE,'Ice / slick','Slippery, you keep drifting'],
   [T_WATER,'Water','Impassable. Bullets fly over it'],[T_BRIDGE,'Bridge','Always connects two banks. Can be blown up'],
-  [T_BUSH,'Cover','Hides you from enemies'],[T_BOOST,'Boost pad','Shoves you along at 175 %'],[T_TELE,'Teleporter','Two pads, linked'],[T_CRATER,'Crater','Left behind by big explosions, slows you'],[T_TRENCH,'Trench','Frontline only. Touch it and you drop in: safe from bullets and lasers, not from nukes or mortars. Walk into either wall to peek out and shoot. Reverse ducks back in, forward hops out.']];
+  [T_BUSH,'Cover','Hides you from enemies'],[T_BOOST,'Boost pad','Shoves you along at 175 %'],[T_TELE,'Teleporter','Two pads, linked'],[T_CRATER,'Crater','Left behind by big explosions, slows you'],[T_TRENCH,'Trench','Frontline only. Touch it and you drop in: safe from bullets and lasers, not from nukes or mortars. Walk into either wall to peek out and shoot. Step away from the wall to duck back in, press towards it again to hop out.']];
 const BK=['b','g','s','h','f','d','m','r','a'];
 const FXK=['shot','ex','nuke','frz','laser','die','pick','mine','tele','shieldpop','debris','splash','cap','boom','mega','charge','bomber','click','mlaunch','mortar','whistle'];
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -672,35 +677,54 @@ class Game{
     const rld=!!(inp&B_RL),rlPress=rld&&!t.pr;t.pr=rld;
     const up=!!(inp&B_UP),upPress=up&&!t.pu;t.pu=up;
     const dn=!!(inp&B_DN),dnPress=dn&&!t.pdn;t.pdn=dn;
+    const lt=!!(inp&B_LT),ltPress=lt&&!t.plt;t.plt=lt;const rt=!!(inp&B_RT),rtPress=rt&&!t.prt;t.prt=rt;
+    const ma=unpackAim(inp); // mouse point: WASD move in screen directions, the gun points at the mouse
+    const aimAt=(x,y)=>Math.hypot(ma.x-x,ma.y-y)>3?Math.atan2(ma.y-y,ma.x-x):null;
     // reload: only ever starts on the reload key, never by itself. Each press loads exactly one round.
     if(rlPress&&t.mag<MAG&&!t.rlOn){t.rlOn=true;t.rl=0;}
     if(t.rlOn){t.rl+=dt;if(t.rl>=RELOAD_T){t.rl=0;t.mag=Math.min(MAG,t.mag+1);t.rlOn=false;if(t.brain)t.pr=false;}} // bots hold the key, let them press again
     if(t.frozen>0){t.frozen-=dt;t.vx=t.vy=0;return;}
     if(t.mo){this.crewTank(t,inp,pwPress,dt);return;}
     if(t.aim){ // nuke scope: tank parked, movement keys fly the crosshair
-      const sp=420*dt;if(inp&B_UP)t.aim.y-=sp;if(inp&B_DN)t.aim.y+=sp;if(inp&B_LT)t.aim.x-=sp;if(inp&B_RT)t.aim.x+=sp;
+      if(ma){t.aim.x=ma.x;t.aim.y=ma.y;}
+      else{const sp=420*dt;if(inp&B_UP)t.aim.y-=sp;if(inp&B_DN)t.aim.y+=sp;if(inp&B_LT)t.aim.x-=sp;if(inp&B_RT)t.aim.x+=sp;}
       t.aim.x=clamp(t.aim.x,10,MW-10);t.aim.y=clamp(t.aim.y,10,MH-10);t.aim.t-=dt;
       if(pwPress||t.aim.t<=0)this.callBomber(t);
       t.vx=t.vy=0;return;}
     if(t.charge>0){ // mega beam: parked, can slowly adjust aim
-      if(inp&B_LT)t.a-=1.1*dt;if(inp&B_RT)t.a+=1.1*dt;
+      if(ma){const ta=aimAt(t.x,t.y);if(ta!=null)t.a+=clamp(angDiff(t.a,ta),-1.1*dt,1.1*dt);}
+      else{if(inp&B_LT)t.a-=1.1*dt;if(inp&B_RT)t.a+=1.1*dt;}
       t.charge-=dt;if(t.charge<=0){t.charge=0;this.fireMega(t);}
       t.vx=t.vy=0;return;}
-    if(t.guide){const g=t.guide;if(!g.alive)t.guide=null;else{if(inp&B_LT)g.a-=3.6*dt;if(inp&B_RT)g.a+=3.6*dt;g.sp=(inp&B_UP)?250:165;if(pwPress)this.explodeBullet(g);t.vx=t.vy=0;return;}}
+    if(t.guide){const g=t.guide;if(!g.alive)t.guide=null;else{
+      if(ma){const ta=aimAt(g.x,g.y);if(ta!=null)g.a+=clamp(angDiff(g.a,ta),-3.6*dt,3.6*dt);} // flies towards the mouse
+      else{if(inp&B_LT)g.a-=3.6*dt;if(inp&B_RT)g.a+=3.6*dt;}g.sp=(inp&B_UP)?250:165;if(pwPress)this.explodeBullet(g);t.vx=t.vy=0;return;}}
     let rot=0;if(inp&B_LT)rot-=1;if(inp&B_RT)rot+=1;
     if(t.tr===2){ // peeking over the parapet: pinned to the spot, aim within +-80 deg of straight out
       t.x=t.px;t.y=t.py;t.vx=t.vy=0;
-      const base=t.pk>0?0:Math.PI;t.a=base+clamp(angDiff(base,t.a+rot*TURN_SPEED*dt),-PEEK_ARC,PEEK_ARC);
-      if(dnPress){this.duck(t);return;}
-      if(upPress){this.hopOut(t);return;}
+      const base=t.pk>0?0:Math.PI;
+      if(ma){const ta=aimAt(t.x,t.y);if(ta!=null)t.a=base+clamp(angDiff(base,ta),-PEEK_ARC,PEEK_ARC);
+        const out=t.pk>0?rtPress:ltPress,back=t.pk>0?ltPress:rtPress; // towards the open side hops out, away ducks
+        if(back||dnPress){this.duck(t);t.mvLock=true;return;}
+        if(out){this.hopOut(t);return;}}
+      else{t.a=base+clamp(angDiff(base,t.a+rot*TURN_SPEED*dt),-PEEK_ARC,PEEK_ARC);
+        if(dnPress){this.duck(t);return;}
+        if(upPress){this.hopOut(t);return;}}
       this.gun(t,press);this.power(t,pw,pwPress);return;}
     let sp=105*(t.turbo>0?1.5:1);
     if(ty===T_SAND||ty===T_CRATER)sp*=0.6;else if(ty===T_BOOST)sp*=1.75;else if(ty===T_BUSH)sp*=0.85;
     if(t.tr===1)sp*=0.8;
-    t.a+=rot*TURN_SPEED*dt;
-    if(!dn)t.dnLock=false; // after ducking, the reverse key has to be let go before it moves you again
-    let mv=0;if(up)mv+=1;if(dn&&!t.dnLock)mv-=0.7;
-    const tvx=Math.cos(t.a)*sp*mv,tvy=Math.sin(t.a)*sp*mv;
+    let tvx,tvy;
+    if(ma){ // mouse aim: body and gun face the mouse, WASD walk up/left/down/right on screen
+      const ta=aimAt(t.x,t.y);if(ta!=null)t.a=ta;
+      if(!(up||dn||lt||rt))t.mvLock=false; // after ducking, let go of the keys before they move you again
+      let mx=(rt?1:0)-(lt?1:0),my=(dn?1:0)-(up?1:0);const n=Math.hypot(mx,my);
+      if(t.mvLock||!n){tvx=tvy=0;}else{tvx=mx/n*sp;tvy=my/n*sp;}}
+    else{
+      t.a+=rot*TURN_SPEED*dt;
+      if(!dn)t.dnLock=false; // after ducking, the reverse key has to be let go before it moves you again
+      let mv=0;if(up)mv+=1;if(dn&&!t.dnLock)mv-=0.7;
+      tvx=Math.cos(t.a)*sp*mv;tvy=Math.sin(t.a)*sp*mv;}
     if(t.tr===1){ // ducked in the trench: walk up and down; push into either wall to peek out on that side
       t.vx=tvx;t.vy=tvy;const lim=C/2-TR-2,ox=t.x-t.tcx;
       t.y+=t.vy*dt;
@@ -749,7 +773,8 @@ class Game{
     const mo=this.mortars.find(q=>q.id===t.mo),slot=mo?mo.crew.indexOf(t.pid):-1;if(slot<0){t.mo=0;return;}
     t.x=mo.x+(slot===0?-15:15);t.y=mo.y+10;t.vx=t.vy=0;
     if(mo.aim)t.a=Math.atan2(mo.aim.y-t.y,mo.aim.x-t.x);
-    if(slot===0&&mo.aim){const sp=300*dt;if(inp&B_UP)mo.aim.y-=sp;if(inp&B_DN)mo.aim.y+=sp;if(inp&B_LT)mo.aim.x-=sp;if(inp&B_RT)mo.aim.x+=sp;
+    const ma=unpackAim(inp);if(slot===0&&mo.aim&&ma){mo.aim.x=ma.x;mo.aim.y=ma.y;} // the aimer points the scope with the mouse
+    else if(slot===0&&mo.aim){const sp=300*dt;if(inp&B_UP)mo.aim.y-=sp;if(inp&B_DN)mo.aim.y+=sp;if(inp&B_LT)mo.aim.x-=sp;if(inp&B_RT)mo.aim.x+=sp;
       mo.aim.x=clamp(mo.aim.x,10,MW-10);mo.aim.y=clamp(mo.aim.y,10,MH-10);}
     if(!pwPress)return;
     if(mo.crew.length===1){this.leaveMortar(t);return;} // alone you can still walk away; once two of you are on it, you're stuck
@@ -1475,16 +1500,18 @@ class Renderer{
     ctx.setTransform(dpr,0,0,dpr,0,0);
     if(this.flash>0){ctx.fillStyle='rgba(245,255,220,'+this.flash+')';ctx.fillRect(0,0,MW,MH);this.flash=Math.max(0,this.flash-dt*1.6);}
     const meT=V.tanks.find(t=>view.isMe(t.pid)&&view.single);
-    if(meT&&meT.alive){if(meT.guide)this.label(ctx,'GUIDED MISSILE · steer with left/right · forward = boost · '+keyLabel(BINDS.power)+' = boom',MH-20,16);
-      else if(meT.aim)this.label(ctx,'NUKE STRIKE · fly the scope with '+[BINDS.up,BINDS.left,BINDS.down,BINDS.right].map(keyLabel).join(' ')+' · '+keyLabel(BINDS.power)+' to call the bomber',MH-20,16);
-      else if(meT.charge>0)this.label(ctx,'CHARGING MEGA BEAM · left/right to adjust',MH-20,16);
-      else if(meT.mo){const mo=(V.mortars||[]).find(q=>q.id===meT.mo),slot=mo?mo.crew.indexOf(meT.pid):-1,mv=[BINDS.up,BINDS.left,BINDS.down,BINDS.right].map(keyLabel).join(' ');
+    const ms=MOUSE.on,pwk=(ms?'right click / ':'')+keyLabel(BINDS.power);
+    if(meT&&meT.alive){if(meT.guide)this.label(ctx,'GUIDED MISSILE · '+(ms?'flies to your mouse':'steer with left/right')+' · '+keyLabel(BINDS.up)+' = boost · '+pwk+' = boom',MH-20,16);
+      else if(meT.aim)this.label(ctx,'NUKE STRIKE · '+(ms?'point the scope with the mouse':'fly the scope with '+[BINDS.up,BINDS.left,BINDS.down,BINDS.right].map(keyLabel).join(' '))+' · '+pwk+' to call the bomber',MH-20,16);
+      else if(meT.charge>0)this.label(ctx,'CHARGING MEGA BEAM · '+(ms?'swing it slowly with the mouse':'left/right to adjust'),MH-20,16);
+      else if(meT.mo){const mo=(V.mortars||[]).find(q=>q.id===meT.mo),slot=mo?mo.crew.indexOf(meT.pid):-1,mv=ms?'the mouse':[BINDS.up,BINDS.left,BINDS.down,BINDS.right].map(keyLabel).join(' ');
         if(mo){const left=mo.shots+' shell'+(mo.shots===1?'':'s')+' left';
           if(mo.crew.length<2)this.label(ctx,'MORTAR · '+(slot===0?'aim with '+mv+' · ':'')+'waiting for a second crewman · '+keyLabel(BINDS.power)+' = walk away',MH-20,16);
           else if(slot===0)this.label(ctx,'MORTAR · you aim: '+mv+' · your mate fires · '+left,MH-20,16);
           else this.label(ctx,'MORTAR · '+(mo.cd>0?'loading … ':keyLabel(BINDS.power)+' = FIRE · ')+'your mate aims · '+left,MH-20,16);}}
       else if(meT.tr===1)this.label(ctx,'IN THE TRENCH · safe from bullets · walk into a wall to peek out',MH-20,15);
-      else if(meT.tr===2)this.label(ctx,'PEEKING · aim ±80° · '+keyLabel(BINDS.down)+' = duck · '+keyLabel(BINDS.up)+' = climb out',MH-20,15);
+      else if(meT.tr===2){const o=meT.pk>0?BINDS.right:BINDS.left,b=meT.pk>0?BINDS.left:BINDS.right;
+        this.label(ctx,ms?'PEEKING · aim ±80° with the mouse · '+keyLabel(b)+' = duck · '+keyLabel(o)+' = climb out':'PEEKING · aim ±80° · '+keyLabel(BINDS.down)+' = duck · '+keyLabel(BINDS.up)+' = climb out',MH-20,15);}
       else{const mo=(V.mortars||[]).find(q=>Math.hypot(q.x-meT.x,q.y-meT.y)<TR+22);
         if(mo){const mp=V.players.find(p=>p.pid===meT.pid),own=mo.crew.length===1&&V.players.find(p=>p.pid===mo.crew[0]);
           if(mo.crew.length===0)this.label(ctx,keyLabel(BINDS.power)+' = man the mortar (you aim, a teammate fires)',MH-20,16);
@@ -1669,7 +1696,7 @@ function myName(){return cleanName($('nameIn').value||S.name||'Tank');}
 
 // ====== Key bindings ======
 const BIND_DEF={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',fire:'Space',power:'Enter',reload:'KeyR',chat:'KeyT'};
-const BIND_LBL={up:'Move forward',down:'Reverse',left:'Turn left',right:'Turn right',fire:'Shoot gun',power:'Use power-up',reload:'Reload',chat:'Chat'};
+const BIND_LBL={up:'Move up',down:'Move down',left:'Move left',right:'Move right',fire:'Shoot gun',power:'Use power-up',reload:'Reload',chat:'Chat'};
 let BINDS=Object.assign({},BIND_DEF);
 try{const s=JSON.parse(load('sbcw_binds')||'null');if(s&&typeof s==='object')for(const k in BIND_DEF)if(typeof s[k]==='string'&&s[k])BINDS[k]=s[k];}catch(e){}
 const LOCAL_SCH={p2:{up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',fire:'ShiftRight',power:'ControlRight',reload:'Slash'},p3:{up:'KeyI',down:'KeyK',left:'KeyJ',right:'KeyL',fire:'KeyU',power:'KeyO',reload:'KeyP'}};
@@ -1690,6 +1717,16 @@ function renderBinds(){
 const keys=new Set();
 function readKeys(s){const h=c=>keys.has(c);return(h(s.up)?B_UP:0)|(h(s.down)?B_DN:0)|(h(s.left)?B_LT:0)|(h(s.right)?B_RT:0)|(h(s.fire)?B_FIRE:0)|(h(s.power)?B_PW:0)|(h(s.reload)?B_RL:0);}
 function readScheme(s){return readKeys(s==='p2'?LOCAL_SCH.p2:s==='p3'?LOCAL_SCH.p3:BINDS);}
+// Player 1 (and every online player on their own screen): keys + mouse buttons, plus the mouse point once the mouse was used on the map.
+const MOUSE={x:0,y:0,on:false,bits:0,tap:0}; // tap: a click is held for at least one game step, even a very quick one
+function myInput(){const bits=readScheme('p1')|S.touch|MOUSE.bits|MOUSE.tap;MOUSE.tap=0;return MOUSE.on?packAim(bits,MOUSE.x,MOUSE.y):bits;}
+(()=>{const cv=$('cv'),st=$('stage');
+  const at=e=>{const r=cv.getBoundingClientRect();if(!r.width)return;MOUSE.x=clamp((e.clientX-r.left)/r.width*MW,0,MW);MOUSE.y=clamp((e.clientY-r.top)/r.height*MH,0,MH);MOUSE.on=true;};
+  cv.addEventListener('mousemove',at);
+  cv.addEventListener('mousedown',e=>{at(e);const bit=e.button===0?B_FIRE:e.button===2?B_PW:0;MOUSE.bits|=bit;MOUSE.tap|=bit;e.preventDefault();if(document.activeElement&&document.activeElement!==document.body)document.activeElement.blur();});
+  addEventListener('mouseup',e=>{if(e.button===0)MOUSE.bits&=~B_FIRE;else if(e.button===2)MOUSE.bits&=~B_PW;});
+  addEventListener('blur',()=>{MOUSE.bits=0;});
+  st.addEventListener('contextmenu',e=>e.preventDefault());})();
 addEventListener('keydown',e=>{
   if(S.bindWait){e.preventDefault();if(e.code!=='Escape')setBind(S.bindWait,e.code);S.bindWait=null;renderBinds();return;}
   const typing=e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLSelectElement;
@@ -1701,7 +1738,7 @@ addEventListener('keyup',e=>{keys.delete(e.code);});
 addEventListener('blur',()=>keys.clear());
 function collectInputs(){
   const m=new Map(),G=S.game;let first=true;
-  for(const p of G.players){if(p.kind==='human'){m.set(p.pid,readScheme(p.scheme)|(first?S.touch:0));first=false;}}
+  for(const p of G.players){if(p.kind==='human'){m.set(p.pid,first?myInput():readScheme(p.scheme));first=false;}}
   if(S.role==='host')for(const p of G.players)if(p.kind==='remote')m.set(p.pid,NET.inp.get(p.peer)||0);
   return m;
 }
@@ -1935,7 +1972,7 @@ function onHostData(c,d){
     renderLobby();lobbyChanged();return;}
   if(!e)return;const cid=e.cid,route=c.relay?'relay':'direct';
   if((d.t==='inp'||d.t==='ping')&&NET.via.get(cid)!==route){NET.via.set(cid,route);renderLobby();}
-  if(d.t==='inp'){NET.inp.set(cid,Number.isInteger(d.v)?d.v&127:0);return;}
+  if(d.t==='inp'){const v=d.v;NET.inp.set(cid,Number.isInteger(v)&&v>=0&&v<AIM_MAX?(v<256?v&127:v-(v%256)+(v%256&127)):0);return;}
   if(d.t==='ping')return;
   if(d.t==='chat'){const p=L.players.find(q=>q.peer===cid);if(!p)return;const now=performance.now(),last=S.chatRate.get(cid)||0;if(now-last<600)return;S.chatRate.set(cid,now);
     const m=cleanMsg(d.m);if(!m)return;addMsg('chat',m,p.name,p.col);broadcast({t:'chat',n:p.name,c:p.col,m});return;}
@@ -2137,7 +2174,7 @@ function renderHud(V,view){
   const sorted=[...V.players].sort((a,b)=>b.score-a.score);
   if(M.team){for(const tm of[0,1]){const h=document.createElement('li');h.className='teamrow';h.style.color=TEAMC[tm];const a=document.createElement('span'),b=document.createElement('span');a.textContent='Team '+TEAMN[tm];b.textContent=V.ts[tm];h.append(a,b);ol.appendChild(h);sorted.filter(p=>p.team===tm).forEach(row);}}
   else sorted.forEach(row);
-  $('hCtrl').textContent='Shoot '+keyLabel(BINDS.fire)+' · Power '+keyLabel(BINDS.power)+' · Reload '+keyLabel(BINDS.reload)+' · Chat '+keyLabel(BINDS.chat);
+  $('hCtrl').textContent='Move '+[BINDS.up,BINDS.left,BINDS.down,BINDS.right].map(keyLabel).join('')+' · Aim with the mouse · Shoot left click / '+keyLabel(BINDS.fire)+' · Power right click / '+keyLabel(BINDS.power)+' · Reload '+keyLabel(BINDS.reload)+' · Chat '+keyLabel(BINDS.chat);
   $('overBox').hidden=!(V.over&&S.role!=='client');
   $('btnAbort').hidden=S.role==='client';
   renderFeed();
@@ -2178,7 +2215,10 @@ function frame(now){
     V=gameView(S.game);
     if(S.role==='host'&&!TICKER&&NET.conns.size){snapT+=dt;if(snapT>=(hasRelayConns()?0.07:0.05)){snapT=0;broadcast({t:'s',d:S.game.snap()});}}}
   else if(S.role==='client'){
-    const bits=S.chatOpen?0:(readScheme('p1')|S.touch);S.inpT=(S.inpT||0)-dt;if((bits!==S.inp||S.inpT<=0)&&clientLinked()){S.inp=bits;S.inpT=0.5;toHost({t:'inp',v:bits});}
+    // keys/buttons go out at once; a mouse that only moved is sent at most ~20x a second
+    const bits=S.chatOpen?(MOUSE.on?packAim(0,MOUSE.x,MOUSE.y):0):myInput();S.inpT=(S.inpT||0)-dt;S.inpA=(S.inpA||0)-dt;
+    const keyChg=(bits%256)!==((S.inp>=0?S.inp:0)%256)||(bits<256)!==(S.inp<256),aimChg=bits!==S.inp;
+    if((keyChg||(aimChg&&S.inpA<=0)||S.inpT<=0)&&clientLinked()){S.inp=bits;S.inpT=0.5;S.inpA=0.05;toHost({t:'inp',v:bits});}
     V=clientView();if(performance.now()-S.lastMsg>8000){leaveAll(false,'Lost the connection to the host.');return;}}
   if(!V)return;
   const view=makeView(V);
