@@ -302,6 +302,7 @@ kbd{font-family:var(--f-cond);font-weight:700;background:#0b0a09;border:1px soli
           <input id="chatIn" type="text" maxlength="120" placeholder="Talk shit … Enter sends" aria-label="Chat message">
         </div>
         <div id="hCtrl" class="ctrlhint"></div>
+        <div id="hNet" class="ctrlhint" aria-live="off"></div>
         <button id="btnAbort" type="button">Drag everyone back to the lobby</button>
         <button id="btnLeave" type="button">Leave game</button>
       </aside>
@@ -330,6 +331,7 @@ function packAim(bits,x,y){return bits+256*(1+clamp(Math.round(x),0,AIM_X-1)+AIM
 function unpackAim(inp){if(!(inp>=256))return null;const v=Math.floor(inp/256)-1;return{x:v%AIM_X,y:Math.floor(v/AIM_X)};}
 const COLORS=['#e5484d','#3e7bfa','#2fbf71','#f5a524','#a463f2','#14b8a6','#ec4899','#e8e2cf'];
 const TEAMC=['#e5484d','#3e7bfa'],TEAMN=['Red','Blue'];
+var QCAP=2; // max drawing resolution (x screen pixels); lowered automatically on slow computers, see perfTick
 const STAIN_LIFE=2,STAIN_FADE=0.5,STAIN_SIZE=360; // blood stains: seconds on the ground, fade-out, layer size in px
 const BOTN=['Hissy Fit','Sir Slither','Danger Noodle','Rattles','Fang','Coily McCoil','Sssteve','Lord Venom'];
 // Mortar: a 60 mm light mortar. Map scale is about 5 m per cell, so the whole map is ~100 x 65 m. At these short
@@ -1912,8 +1914,11 @@ function openPeer(id){
 function send(c,msg){
   if(c&&c.relay){if(RELAY.cli&&S.code)try{RELAY.cli.publish(topicC(S.code),JSON.stringify(Object.assign({to:c.id},msg)));}catch(e){}return;}
   try{if(c&&c.open)c.send(msg);}catch(e){}}
+// A direct line that still has unsent data is slow right now: skip this snapshot for it instead of queueing it.
+// A queue of old snapshots is what turns a short hiccup into seconds of lag; the next fresh one goes out as soon as it's clear.
+function lineBusy(c){try{const dc=c.dataChannel;return!!((dc&&dc.bufferedAmount>32768)||(c.bufferSize|0)>2);}catch(e){return false;}}
 function broadcast(msg){
-  let relay=false;for(const v of NET.conns.values()){if(v.conn.relay)relay=true;else send(v.conn,msg);}
+  let relay=false;for(const v of NET.conns.values()){if(v.conn.relay)relay=true;else if(msg.t==='s'&&lineBusy(v.conn))continue;else send(v.conn,msg);}
   if((relay||msg.st==='closed')&&RELAY.cli&&S.code)try{RELAY.cli.publish(topicC(S.code),JSON.stringify(msg));}catch(e){}}
 function hasRelayConns(){for(const v of NET.conns.values())if(v.conn.relay)return true;return false;}
 function toHost(msg){
@@ -1973,7 +1978,7 @@ function onHostData(c,d){
   if(!e)return;const cid=e.cid,route=c.relay?'relay':'direct';
   if((d.t==='inp'||d.t==='ping')&&NET.via.get(cid)!==route){NET.via.set(cid,route);renderLobby();}
   if(d.t==='inp'){const v=d.v;NET.inp.set(cid,Number.isInteger(v)&&v>=0&&v<AIM_MAX?(v<256?v&127:v-(v%256)+(v%256&127)):0);return;}
-  if(d.t==='ping')return;
+  if(d.t==='ping'){if(typeof d.ts==='number')send(c,{t:'pong',ts:d.ts});return;} // echo so the player can see their ping
   if(d.t==='chat'){const p=L.players.find(q=>q.peer===cid);if(!p)return;const now=performance.now(),last=S.chatRate.get(cid)||0;if(now-last<600)return;S.chatRate.set(cid,now);
     const m=cleanMsg(d.m);if(!m)return;addMsg('chat',m,p.name,p.col);broadcast({t:'chat',n:p.name,c:p.col,m});return;}
 }
@@ -1996,7 +2001,7 @@ async function joinGame(code){
   show('lobby');S.role='client';S.code=code;S.clb={cfg:defCfg('lts'),players:[]};S.msgs=[];
   S.cid=(Math.random().toString(36).replace(/[^a-z0-9]/g,'')+Math.random().toString(36).replace(/[^a-z0-9]/g,'')).slice(2,12).padEnd(10,'x');
   renderLobby();$('lbHint').textContent='Connecting to the host …';
-  S.snaps=[];S.inp=-1;S.lastMsg=performance.now();S.lastFeed=0;R.reset();S.nlog=[];
+  S.snaps=[];S.inp=-1;S.ping=null;S.lastMsg=performance.now();S.lastFeed=0;R.reset();S.nlog=[];
   // both routes start at once; the first one the host answers on wins
   const useDirect=typeof Peer==='function'&&!FORCE_RELAY,useRelay=typeof mqtt!=='undefined';
   const pd=useDirect?(nlog('direct: trying'),tryDirect(code).then(v=>{nlog('direct: '+(v?'ok':'failed ('+(S.whyDirect||'?')+')'));return v;})):Promise.resolve(false);
@@ -2009,7 +2014,7 @@ async function joinGame(code){
   S.abortDirect=S.abortRelay=null;
   nlog('using '+(via==='direct'?'direct line':'backup route'));
   S.lastMsg=performance.now();
-  S.clientTimer=setInterval(()=>{if(S.role!=='client')return;toHost({t:'ping'});if(performance.now()-S.lastMsg>10000)leaveAll(false,'Lost the connection to the host.');},1000);
+  S.clientTimer=setInterval(()=>{if(S.role!=='client')return;toHost({t:'ping',ts:Math.round(performance.now())});if(performance.now()-S.lastMsg>10000)leaveAll(false,'Lost the connection to the host.');},1000);
 }
 function tryDirect(code){
   // Success only counts once the host has answered with a lobby that lists us, not just when the line opens.
@@ -2054,6 +2059,7 @@ function onClientData(d){
   if(S.role!=='client'||!d||typeof d!=='object')return;S.lastMsg=performance.now();
   if(d.t==='s'){if(!d.d||typeof d.d!=='object')return;S.snaps.push({t:performance.now(),d:d.d});if(S.snaps.length>10)S.snaps.shift();if(S.screen!=='game'){show('game');$('overBox').hidden=true;}return;}
   if(d.t==='chat'){addMsg('chat',cleanMsg(d.m),cleanName(d.n),clamp(+d.c|0,0,7));return;}
+  if(d.t==='pong'){const p=performance.now()-(+d.ts||0);if(p>=0&&p<30000)S.ping=S.ping==null?p:S.ping*0.6+p*0.4;return;}
   if(d.t==='kicked'){leaveAll(false,'The host kicked you out. Harsh.');return;}
   if(d.t==='full'){leaveAll(false,'That game is full (8 soldiers).');return;}
   if(d.t!=='lb')return;
@@ -2084,7 +2090,7 @@ async function leaveAll(silent,msg){
 // ====== Client view from snapshots ======
 function clientView(){
   const sn=S.snaps;if(!sn.length)return null;
-  const rt=performance.now()-95;let A=sn[0],B=sn[0],al=0;
+  const rt=performance.now()-75;let A=sn[0],B=sn[0],al=0; // draw ~75 ms behind the newest snapshot: enough to smooth 20/s updates
   if(rt>=sn[sn.length-1].t){A=B=sn[sn.length-1];}
   else for(let i=sn.length-1;i>0;i--){if(sn[i-1].t<=rt){A=sn[i-1];B=sn[i];al=clamp((rt-A.t)/((B.t-A.t)||1),0,1);break;}}
   const s=B.d,p=A.d;
@@ -2104,6 +2110,11 @@ function clientView(){
       tr:(t[13]|0)===1?1:(t[13]|0)>=2?2:0,pk:(t[13]|0)===2?1:(t[13]|0)===3?-1:0,mo:t[14]|0};});
   const bullets=(Array.isArray(s.B)?s.B:[]).map(b=>{const q=pB.get(b[0]);let x=+b[1],y=+b[2];if(q&&Math.hypot(q[1]-x,q[2]-y)<40){x=L(+q[1],x);y=L(+q[2],y);}const a=+b[4];return{x,y,k:BK[b[3]]||'b',vx:Math.cos(a),vy:Math.sin(a)};});
   const players=(Array.isArray(s.P)?s.P:[]).map(a=>({pid:a[0]|0,name:cleanName(a[1]),col:clamp(a[2]|0,0,7),team:a[3]?1:0,score:+a[4]|0,kills:a[5]|0,deaths:a[6]|0,peer:String(a[7]||''),kind:a[8]?'bot':'remote'}));
+  // Your own soldier points at your mouse right away (drawn locally), so aiming feels instant
+  // even though the host still has the final say on where the shot goes.
+  {const mp=myPeer(),me=players.find(p=>p.peer&&p.peer===mp),mt=me&&tanks.find(t=>t.pid===me.pid);
+    if(mt&&mt.alive&&MOUSE.on&&!S.chatOpen&&!mt.mo&&!mt.aim&&!mt.guide&&!mt.charge&&!mt.frozen){const ta=Math.atan2(MOUSE.y-mt.y,MOUSE.x-mt.x);
+      if(mt.tr===2){const base=mt.pk>0?0:Math.PI;mt.a=base+clamp(angDiff(base,ta),-PEEK_ARC,PEEK_ARC);}else if(mt.tr!==1)mt.a=ta;}}
   const md=MODES[s.md]?s.md:'lts';
   const pO=Array.isArray(p.O)?p.O:[];
   if(Array.isArray(s.kf))for(const f of s.kf)if(Array.isArray(f)&&(f[0]|0)>S.lastFeed){S.lastFeed=f[0]|0;addMsg('feed',String(f[1]).slice(0,140));}
@@ -2196,7 +2207,13 @@ function hostTick(){
 const TICKER=(()=>{try{const w=new Worker(URL.createObjectURL(new Blob(['setInterval(function(){postMessage(0)},20)'],{type:'text/javascript'})));w.onmessage=hostTick;return w;}catch(e){return null;}})();
 // Game size: 100% = the whole map fits the window height; the canvas re-renders at a sharper resolution when it gets big.
 let ZOOM=clamp(parseInt(load('sbcw_zoom')||'100',10)||100,50,200);
-function renderScale(){const d=window.devicePixelRatio||1,st=document.getElementById('stage'),w=(st&&st.clientWidth)||MW;return Math.min(2,Math.max(1,Math.round(d*Math.max(1,w/MW)*4)/4));}
+// Draw at the screen's real resolution (capped). If this computer can't keep up (low frame rate), QCAP drops the
+// drawing resolution step by step: a slightly softer picture beats a stuttering one, which feels exactly like lag.
+function renderScale(){const d=window.devicePixelRatio||1,st=document.getElementById('stage'),w=(st&&st.clientWidth)||MW;return Math.min(QCAP,Math.max(1,Math.round(d*w/MW*4)/4));}
+const PERF={n:0,t:0,fps:60,chk:0};
+function perfTick(dt){PERF.n++;PERF.t+=dt;if(PERF.t>=1){PERF.fps=PERF.n/PERF.t;PERF.n=0;PERF.t=0;
+  if(!document.hidden&&PERF.fps<45&&R.dpr>1){if(++PERF.chk>=2){QCAP=Math.max(1,R.dpr-0.25);R.resize();PERF.chk=0;}}else PERF.chk=0;
+  const el=$('hNet');if(el)el.textContent=(S.role==='client'?'Ping '+(S.ping==null?'…':Math.round(S.ping)+' ms')+' · '+(NET.relayId?'backup relay':'direct line')+' · ':'')+Math.round(PERF.fps)+' fps';}}
 function rescaleCanvas(){if(S.screen==='game'&&renderScale()!==R.dpr)R.resize();}
 function fitStage(){const st=$('stage');st.style.aspectRatio=MW+'/'+MH;st.style.maxWidth='calc((100vh - 90px) * '+(MW/MH*ZOOM/100).toFixed(4)+')';
   $('zoomIn').value=ZOOM;$('zoomVal').textContent=ZOOM+'%';requestAnimationFrame(rescaleCanvas);}
@@ -2215,13 +2232,15 @@ function frame(now){
     V=gameView(S.game);
     if(S.role==='host'&&!TICKER&&NET.conns.size){snapT+=dt;if(snapT>=(hasRelayConns()?0.07:0.05)){snapT=0;broadcast({t:'s',d:S.game.snap()});}}}
   else if(S.role==='client'){
-    // keys/buttons go out at once; a mouse that only moved is sent at most ~20x a second
+    // keys/buttons go out at once; a mouse that only moved is sent at most 10x a second and only if it moved a bit.
+    // (Each message is a publish on the backup relay, which throttles chatty clients: more is not faster.)
     const bits=S.chatOpen?(MOUSE.on?packAim(0,MOUSE.x,MOUSE.y):0):myInput();S.inpT=(S.inpT||0)-dt;S.inpA=(S.inpA||0)-dt;
-    const keyChg=(bits%256)!==((S.inp>=0?S.inp:0)%256)||(bits<256)!==(S.inp<256),aimChg=bits!==S.inp;
-    if((keyChg||(aimChg&&S.inpA<=0)||S.inpT<=0)&&clientLinked()){S.inp=bits;S.inpT=0.5;S.inpA=0.05;toHost({t:'inp',v:bits});}
+    const keyChg=(bits%256)!==((S.inp>=0?S.inp:0)%256)||(bits<256)!==(S.inp<256);
+    const na=unpackAim(bits),oa=unpackAim(S.inp),aimChg=!!na&&(!oa||Math.hypot(na.x-oa.x,na.y-oa.y)>=5);
+    if((keyChg||(aimChg&&S.inpA<=0)||S.inpT<=0)&&clientLinked()){S.inp=bits;S.inpT=0.5;S.inpA=0.1;toHost({t:'inp',v:bits});}
     V=clientView();if(performance.now()-S.lastMsg>8000){leaveAll(false,'Lost the connection to the host.');return;}}
   if(!V)return;
-  const view=makeView(V);
+  const view=makeView(V);perfTick(dt);
   R.draw(V,view);
   hudT-=dt;if(hudT<=0){hudT=0.2;renderHud(V,view);}
 }
