@@ -172,7 +172,7 @@ kbd{font-family:var(--f-cond);font-weight:700;background:#0b0a09;border:1px soli
           <div class="kicker">Est. 2026 · Geneva Convention not included</div>
           <h1>SNAKEY BOYS <span>CIVIL WAR</span></h1>
           <p class="tag">Brothers. Bullets. Zero fucking mercy.</p>
-          <p class="muted" style="max-width:52ch;margin:10px 0 0">Up to 8 soldiers in a maze of rivers, bridges, ice and jungle. Bullets bounce off walls straight back into your own stupid face. Every death is messy. 14 power-ups, 5 modes, 5 theatres of war.</p>
+          <p class="muted" style="max-width:52ch;margin:10px 0 0">Up to 12 soldiers in a maze of rivers, bridges, ice and jungle. Bullets bounce off walls straight back into your own stupid face. Every death is messy. 14 power-ups, 5 modes, 5 theatres of war.</p>
         </div>
         <div class="enlist">
           <div id="inviteBanner" class="invite-banner" hidden>
@@ -329,7 +329,8 @@ const B_UP=1,B_DN=2,B_LT=4,B_RT=8,B_FIRE=16,B_PW=32,B_RL=64;
 const AIM_X=2048,AIM_MAX=256*(1+AIM_X*1024);
 function packAim(bits,x,y){return bits+256*(1+clamp(Math.round(x),0,AIM_X-1)+AIM_X*clamp(Math.round(y),0,1023));}
 function unpackAim(inp){if(!(inp>=256))return null;const v=Math.floor(inp/256)-1;return{x:v%AIM_X,y:Math.floor(v/AIM_X)};}
-const COLORS=['#e5484d','#3e7bfa','#2fbf71','#f5a524','#a463f2','#14b8a6','#ec4899','#e8e2cf'];
+const COLORS=['#e5484d','#3e7bfa','#2fbf71','#f5a524','#a463f2','#14b8a6','#ec4899','#e8e2cf','#8b5a2b','#84cc16','#60a5fa','#4b5563'];
+const MAXP=12,MAXC=COLORS.length-1; // max soldiers per game, highest colour index
 const TEAMC=['#e5484d','#3e7bfa'],TEAMN=['Red','Blue'];
 var QCAP=2; // max drawing resolution (x screen pixels); lowered automatically on slow computers, see perfTick
 const STAIN_LIFE=2,STAIN_FADE=0.5,STAIN_SIZE=360; // blood stains: seconds on the ground, fade-out, layer size in px
@@ -1692,7 +1693,7 @@ const R=new Renderer($('cv'));
 function store(k,v){try{localStorage.setItem(k,v);}catch(e){}}
 function load(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 S.name=cleanName(load('kr_name')||'');if(S.name==='Tank')S.name='';
-S.col=clamp(parseInt(load('kr_col')||'0',10)||0,0,7);
+S.col=clamp(parseInt(load('kr_col')||'0',10)||0,0,MAXC);
 function show(scr){S.screen=scr;$('scrMenu').hidden=scr!=='menu';$('scrLobby').hidden=scr!=='lobby';$('scrGame').hidden=scr!=='game';document.querySelector('.wrap').classList.toggle('wide',scr==='game');if(scr==='game')fitStage();else closeChat();if(scr==='menu')requestAnimationFrame(drawHeroBlood);if(scr==='lobby')renderLobbyChat();}
 function myName(){return cleanName($('nameIn').value||S.name||'Tank');}
 
@@ -1794,8 +1795,8 @@ function setNet(state){const p=$('netPill');
 
 // ====== Lobby ======
 function defCfg(mode){return{mode,limit:MODES[mode].lim,pu:'mid',ff:false,salty:true};}
-function freePid(L){for(let i=0;i<8;i++)if(!L.players.some(p=>p.pid===i))return i;return -1;}
-function freeCol(L,want){if(want!=null&&!L.players.some(p=>p.col===want))return want;for(let i=0;i<8;i++)if(!L.players.some(p=>p.col===i))return i;return 0;}
+function freePid(L){for(let i=0;i<MAXP;i++)if(!L.players.some(p=>p.pid===i))return i;return -1;}
+function freeCol(L,want){if(want!=null&&!L.players.some(p=>p.col===want))return want;for(let i=0;i<COLORS.length;i++)if(!L.players.some(p=>p.col===i))return i;return 0;}
 function autoTeam(L){const a=L.players.filter(p=>p.team===0).length,b=L.players.filter(p=>p.team===1).length;return a<=b?0:1;}
 function addPlayer(L,kind,extra){const pid=freePid(L);if(pid<0)return null;const p=Object.assign({pid,kind,team:autoTeam(L)},extra);p.col=freeCol(L,extra.col);L.players.push(p);return p;}
 function openLobby(kind){
@@ -1814,7 +1815,7 @@ function renderLobby(){
   $('lbInvite').hidden=!host;$('lbChatWrap').hidden=S.role==='local';
   if(host)$('inviteLink').value=location.origin+location.pathname+'?join='+S.code;
   if(client)$('lbShareHint').textContent=S.nlog&&S.nlog.length&&!L.players.length?'Connection: '+S.nlog.join(' · '):'You\'re in. The host picks the mode and starts.';
-  else $('lbShareHint').textContent=host?'Send the invite link to anyone. They open it and hit Join, no account needed. Your browser runs the whole war, so keep this tab open.':'Up to 3 people on one keyboard, bots fill the rest. 8 soldiers max.';
+  else $('lbShareHint').textContent=host?'Send the invite link to anyone. They open it and hit Join, no account needed. Your browser runs the whole war, so keep this tab open.':'Up to 3 people on one keyboard, bots fill the rest. '+MAXP+' soldiers max.';
   $('lbAdd').hidden=client;$('addHuman').hidden=$('remHuman').hidden=host;
   const ul=$('lbPlayers');ul.textContent='';
   const team=MODES[L.cfg.mode]&&MODES[L.cfg.mode].team;
@@ -1840,8 +1841,8 @@ function renderLobby(){
   $('cfgSalty').checked=!!L.cfg.salty;$('cfgSalty').disabled=client;
   $('btnStart').hidden=client;
   const n=L.players.length;$('btnStart').disabled=n<2;
-  $('addBot').disabled=n>=8;$('remBot').disabled=!L.players.some(p=>p.kind==='bot');
-  $('addHuman').disabled=n>=8||L.players.filter(p=>p.kind==='human').length>=3;$('remHuman').disabled=L.players.filter(p=>p.kind==='human').length<=1;
+  $('addBot').disabled=n>=MAXP;$('remBot').disabled=!L.players.some(p=>p.kind==='bot');
+  $('addHuman').disabled=n>=MAXP||L.players.filter(p=>p.kind==='human').length>=3;$('remHuman').disabled=L.players.filter(p=>p.kind==='human').length<=1;
   $('lbHint').textContent=client?'Waiting for the host …':n<2?'You need at least 2 soldiers. Add a bot or wait for victims.':'Target: '+L.cfg.limit+' '+MODES[L.cfg.mode].unit+'.';
 }
 function lobbyChanged(){if(S.role==='host')emitLb();}
@@ -1970,9 +1971,9 @@ function onHostData(c,d){
     if(S.kicked.has(cid)){send(c,{t:'kicked'});setTimeout(()=>{try{c.close();}catch(_){ }},200);return;}
     if(!e)NET.conns.set(c.peer,{conn:c,cid});
     if(L.players.some(p=>p.peer===cid)){emitLb();return;} // same person, second route
-    if(L.players.length>=8){send(c,{t:'full'});setTimeout(()=>{try{c.close();}catch(_){ }},200);return;}
+    if(L.players.length>=MAXP){send(c,{t:'full'});setTimeout(()=>{try{c.close();}catch(_){ }},200);return;}
     NET.via.set(cid,c.relay?'relay':'direct');
-    const np=addPlayer(L,'remote',{name:cleanName(d.name),col:clamp(+d.col||0,0,7),peer:cid});
+    const np=addPlayer(L,'remote',{name:cleanName(d.name),col:clamp(+d.col||0,0,MAXC),peer:cid});
     if(S.game&&np)S.game.addPlayer({pid:np.pid,name:np.name,col:np.col,team:np.team,kind:'remote',peer:np.peer});
     renderLobby();lobbyChanged();return;}
   if(!e)return;const cid=e.cid,route=c.relay?'relay':'direct';
@@ -2058,14 +2059,14 @@ function tryRelay(code){
 function onClientData(d){
   if(S.role!=='client'||!d||typeof d!=='object')return;S.lastMsg=performance.now();
   if(d.t==='s'){if(!d.d||typeof d.d!=='object')return;S.snaps.push({t:performance.now(),d:d.d});if(S.snaps.length>10)S.snaps.shift();if(S.screen!=='game'){show('game');$('overBox').hidden=true;}return;}
-  if(d.t==='chat'){addMsg('chat',cleanMsg(d.m),cleanName(d.n),clamp(+d.c|0,0,7));return;}
+  if(d.t==='chat'){addMsg('chat',cleanMsg(d.m),cleanName(d.n),clamp(+d.c|0,0,MAXC));return;}
   if(d.t==='pong'){const p=performance.now()-(+d.ts||0);if(p>=0&&p<30000)S.ping=S.ping==null?p:S.ping*0.6+p*0.4;return;}
   if(d.t==='kicked'){leaveAll(false,'The host kicked you out. Harsh.');return;}
-  if(d.t==='full'){leaveAll(false,'That game is full (8 soldiers).');return;}
+  if(d.t==='full'){leaveAll(false,'That game is full ('+MAXP+' soldiers).');return;}
   if(d.t!=='lb')return;
   if(d.st==='closed'){leaveAll(false,'The host ended the game.');return;}
   const cfg=d.cfg&&MODES[d.cfg.mode]?{mode:d.cfg.mode,limit:clamp(+d.cfg.limit||1,1,99),pu:PU_RATE[d.cfg.pu]?d.cfg.pu:'mid',ff:!!d.cfg.ff,salty:!!d.cfg.salty}:defCfg('lts');
-  const P=Array.isArray(d.P)?d.P.slice(0,8).map(a=>({pid:+a[0]|0,name:cleanName(a[1]),col:clamp(+a[2]|0,0,7),team:a[3]?1:0,peer:String(a[4]||''),kind:['human','bot','remote'].includes(a[5])?a[5]:'remote'})):[];
+  const P=Array.isArray(d.P)?d.P.slice(0,MAXP).map(a=>({pid:+a[0]|0,name:cleanName(a[1]),col:clamp(+a[2]|0,0,MAXC),team:a[3]?1:0,peer:String(a[4]||''),kind:['human','bot','remote'].includes(a[5])?a[5]:'remote'})):[];
   S.clb={cfg,players:P};
   if(d.st==='lobby'&&S.screen!=='lobby')show('lobby');
   if(S.screen==='lobby')renderLobby();
@@ -2109,7 +2110,7 @@ function clientView(){
       w:PU_KEYS[t[5]]||null,ammo:t[6]|0,resp:t[7]|0,mag:clamp(t[8]|0,0,MAG),rlp:(+t[9]||0)/9,
       tr:(t[13]|0)===1?1:(t[13]|0)>=2?2:0,pk:(t[13]|0)===2?1:(t[13]|0)===3?-1:0,mo:t[14]|0};});
   const bullets=(Array.isArray(s.B)?s.B:[]).map(b=>{const q=pB.get(b[0]);let x=+b[1],y=+b[2];if(q&&Math.hypot(q[1]-x,q[2]-y)<40){x=L(+q[1],x);y=L(+q[2],y);}const a=+b[4];return{x,y,k:BK[b[3]]||'b',vx:Math.cos(a),vy:Math.sin(a)};});
-  const players=(Array.isArray(s.P)?s.P:[]).map(a=>({pid:a[0]|0,name:cleanName(a[1]),col:clamp(a[2]|0,0,7),team:a[3]?1:0,score:+a[4]|0,kills:a[5]|0,deaths:a[6]|0,peer:String(a[7]||''),kind:a[8]?'bot':'remote'}));
+  const players=(Array.isArray(s.P)?s.P:[]).map(a=>({pid:a[0]|0,name:cleanName(a[1]),col:clamp(a[2]|0,0,MAXC),team:a[3]?1:0,score:+a[4]|0,kills:a[5]|0,deaths:a[6]|0,peer:String(a[7]||''),kind:a[8]?'bot':'remote'}));
   // Your own soldier points at your mouse right away (drawn locally), so aiming feels instant
   // even though the host still has the final say on where the shot goes.
   {const mp=myPeer(),me=players.find(p=>p.peer&&p.peer===mp),mt=me&&tanks.find(t=>t.pid===me.pid);
